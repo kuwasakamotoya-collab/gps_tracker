@@ -14,6 +14,7 @@
     --accent: #4f8ef7;
     --accent2: #38d9a9;
     --danger: #f06060;
+    --warn: #f5a623;
     --text: #e8eaf0;
     --text2: #8b90a8;
     --border: rgba(255,255,255,0.08);
@@ -25,7 +26,7 @@
     background: var(--bg);
     color: var(--text);
     min-height: 100vh;
-    padding-bottom: 24px;
+    padding-bottom: 32px;
   }
   header {
     background: var(--surface);
@@ -38,12 +39,7 @@
     top: 0;
     z-index: 1000;
   }
-  header h1 {
-    font-size: 17px;
-    font-weight: 700;
-    letter-spacing: 0.02em;
-    flex: 1;
-  }
+  header h1 { font-size: 17px; font-weight: 700; flex: 1; }
   #countBadge {
     background: var(--accent);
     color: #fff;
@@ -51,7 +47,6 @@
     font-weight: 700;
     padding: 3px 9px;
     border-radius: 99px;
-    letter-spacing: 0.04em;
   }
   .main { padding: 14px 14px 0; }
 
@@ -73,6 +68,7 @@
   #statusBar.success { border-color: var(--accent2); color: var(--accent2); }
   #statusBar.danger  { border-color: var(--danger);  color: var(--danger);  }
   #statusBar.loading { border-color: var(--accent);  color: var(--accent);  }
+  #statusBar.warn    { border-color: var(--warn);    color: var(--warn);    }
   .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
   .dot.pulse { animation: pulse 1.2s infinite; }
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.2} }
@@ -80,7 +76,7 @@
   /* 地図 */
   #map {
     width: 100%;
-    height: 240px;
+    height: 260px;
     border-radius: var(--radius);
     border: 1px solid var(--border);
     overflow: hidden;
@@ -89,14 +85,24 @@
 
   /* ボタン列 */
   .btn-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
-  .btn-row button { padding: 13px 8px; border-radius: var(--radius); border: none; font-size: 14px; font-weight: 700; cursor: pointer; transition: transform 0.1s, opacity 0.2s; letter-spacing: 0.02em; }
+  .btn-row button {
+    padding: 13px 8px;
+    border-radius: var(--radius);
+    border: none;
+    font-size: 14px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: transform 0.1s, opacity 0.2s;
+  }
   .btn-row button:active { transform: scale(0.97); }
   .btn-record { background: var(--accent); color: #fff; grid-column: 1 / -1; font-size: 16px; padding: 16px; }
   .btn-record:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-route { background: var(--surface2); color: var(--warn); border: 1px solid var(--warn) !important; }
+  .btn-route:disabled { opacity: 0.4; cursor: not-allowed; }
   .btn-csv { background: var(--surface2); color: var(--accent2); border: 1px solid var(--accent2) !important; }
   .btn-del  { background: var(--surface2); color: var(--danger);  border: 1px solid var(--danger)  !important; }
 
-  /* ログ */
+  /* セクションタイトル */
   .section-title {
     font-size: 11px;
     font-weight: 700;
@@ -106,6 +112,8 @@
     margin-bottom: 8px;
     padding-left: 2px;
   }
+
+  /* ログ */
   .log-list { display: flex; flex-direction: column; gap: 8px; }
   .log-item {
     background: var(--surface);
@@ -116,46 +124,88 @@
     align-items: center;
     gap: 12px;
     transition: border-color 0.2s;
+    cursor: pointer;
   }
   .log-item:active { border-color: var(--accent); }
+  .log-item.active-route { border-color: var(--warn); }
   .log-num {
-    width: 28px;
-    height: 28px;
+    width: 28px; height: 28px;
     border-radius: 50%;
     background: var(--accent);
     color: #fff;
-    font-size: 12px;
-    font-weight: 700;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    font-size: 12px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
     flex-shrink: 0;
   }
   .log-info { flex: 1; min-width: 0; }
-  .log-time { font-size: 13px; font-weight: 600; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .log-time { font-size: 13px; font-weight: 600; margin-bottom: 2px; }
+  .log-comment { font-size: 13px; color: var(--accent2); margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .log-coords { font-size: 11px; color: var(--text2); font-family: monospace; }
-  .log-acc { font-size: 11px; color: var(--accent2); margin-top: 2px; }
-  .log-del {
-    background: none;
-    border: none;
-    color: var(--text2);
-    font-size: 20px;
-    cursor: pointer;
-    padding: 4px 6px;
-    line-height: 1;
-    border-radius: 8px;
-    flex-shrink: 0;
+  .log-acc { font-size: 11px; color: var(--text2); margin-top: 2px; }
+  .log-actions { display: flex; flex-direction: column; gap: 4px; flex-shrink: 0; }
+  .log-btn {
+    background: none; border: none;
+    font-size: 18px; cursor: pointer;
+    padding: 2px 6px; line-height: 1;
+    border-radius: 8px; color: var(--text2);
   }
-  .log-del:active { background: var(--surface2); color: var(--danger); }
+  .log-btn:active { background: var(--surface2); }
+  .log-btn.route-btn { color: var(--warn); }
+  .log-btn.del-btn:active { color: var(--danger); }
   .empty {
-    text-align: center;
-    color: var(--text2);
-    font-size: 14px;
-    padding: 32px 0;
+    text-align: center; color: var(--text2);
+    font-size: 14px; padding: 32px 0;
   }
+
+  /* コメント入力ダイアログ */
+  .dialog-overlay {
+    display: none;
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.7);
+    z-index: 2000;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+  .dialog-overlay.show { display: flex; }
+  .dialog {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    padding: 24px 20px;
+    width: 100%;
+    max-width: 360px;
+  }
+  .dialog h2 { font-size: 16px; font-weight: 700; margin-bottom: 16px; }
+  .dialog textarea {
+    width: 100%;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    color: var(--text);
+    font-size: 15px;
+    padding: 12px;
+    resize: none;
+    outline: none;
+    font-family: inherit;
+    height: 100px;
+  }
+  .dialog textarea:focus { border-color: var(--accent); }
+  .dialog-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 14px; }
+  .dialog-btns button {
+    padding: 13px;
+    border-radius: 10px;
+    border: none;
+    font-size: 15px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .btn-cancel { background: var(--surface2); color: var(--text2); }
+  .btn-save   { background: var(--accent);   color: #fff; }
 </style>
 </head>
 <body>
+
 <header>
   <h1>📍 GPS位置記録</h1>
   <span id="countBadge">0件</span>
@@ -170,22 +220,43 @@
   <div id="map"></div>
 
   <div class="btn-row">
-    <button class="btn-record" id="btnRecord" onclick="recordLocation()">
+    <button class="btn-record" id="btnRecord" onclick="startRecord()">
       ▶ 現在地を記録する
+    </button>
+    <button class="btn-route" id="btnClearRoute" onclick="clearRoute()" disabled>
+      ✕ 経路を消す
     </button>
     <button class="btn-csv" onclick="exportCSV()">⬇ CSV</button>
     <button class="btn-del" onclick="clearAll()">🗑 全削除</button>
   </div>
 
-  <p class="section-title">記録ログ</p>
+  <p class="section-title">記録ログ（🗺 タップ → 経路表示）</p>
   <div class="log-list" id="logList">
     <div class="empty">まだ記録がありません</div>
+  </div>
+</div>
+
+<!-- コメント入力ダイアログ -->
+<div class="dialog-overlay" id="commentDialog">
+  <div class="dialog">
+    <h2>📝 コメントを入力</h2>
+    <textarea id="commentInput" placeholder="メモを入力（任意）"></textarea>
+    <div class="dialog-btns">
+      <button class="btn-cancel" onclick="cancelRecord()">キャンセル</button>
+      <button class="btn-save" onclick="confirmRecord()">記録する</button>
+    </div>
   </div>
 </div>
 
 <script>
 const STORAGE_KEY = 'gps_tracker_locations';
 let map, markers = [], locations = [];
+let pendingPosition = null;
+let currentLocationMarker = null;
+let routeLayer = null;
+
+// ORS APIキー（無料）※超えたら経路なしに切り替え
+const ORS_API_KEY = '5b3ce3597851110001cf6248a2e2d5a34e0b4c3eb0c2e8b6e0f5b6a2';
 
 function initMap() {
   map = L.map('map', { zoomControl: true }).setView([35.5, 137.0], 9);
@@ -214,7 +285,8 @@ function setStatus(msg, type = '') {
   document.getElementById('statusText').textContent = msg;
 }
 
-function recordLocation() {
+// ① 記録ボタン → GPS取得
+function startRecord() {
   if (!navigator.geolocation) {
     setStatus('このブラウザは位置情報に対応していません', 'danger'); return;
   }
@@ -223,23 +295,17 @@ function recordLocation() {
 
   navigator.geolocation.getCurrentPosition(
     (pos) => {
-      const { latitude: lat, longitude: lng, accuracy } = pos.coords;
-      const now = new Date();
-      const entry = {
-        id: Date.now(),
-        lat, lng,
-        accuracy: Math.round(accuracy),
-        label: now.toLocaleString('ja-JP', { year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit' })
-      };
-      locations.push(entry);
-      saveData();
-      renderAll();
-      map.setView([lat, lng], 16);
-      setStatus(`記録しました ✓ — ${entry.label}（精度 ±${entry.accuracy}m）`, 'success');
-      document.getElementById('btnRecord').disabled = false;
+      pendingPosition = pos;
+      document.getElementById('commentInput').value = '';
+      document.getElementById('commentDialog').classList.add('show');
+      document.getElementById('commentInput').focus();
     },
     (err) => {
-      const msgs = {1:'位置情報の許可が必要です（ブラウザ設定を確認してください）', 2:'位置情報を取得できませんでした', 3:'タイムアウトしました。屋外でお試しください'};
+      const msgs = {
+        1: '位置情報の許可が必要です',
+        2: '位置情報を取得できませんでした',
+        3: 'タイムアウト。屋外でお試しください'
+      };
       setStatus(msgs[err.code] || 'エラーが発生しました', 'danger');
       document.getElementById('btnRecord').disabled = false;
     },
@@ -247,14 +313,54 @@ function recordLocation() {
   );
 }
 
+// ② キャンセル
+function cancelRecord() {
+  pendingPosition = null;
+  document.getElementById('commentDialog').classList.remove('show');
+  document.getElementById('btnRecord').disabled = false;
+  setStatus('キャンセルしました', '');
+}
+
+// ③ 記録確定
+function confirmRecord() {
+  if (!pendingPosition) return;
+  const { latitude: lat, longitude: lng, accuracy } = pendingPosition.coords;
+  const comment = document.getElementById('commentInput').value.trim();
+  const now = new Date();
+  const entry = {
+    id: Date.now(), lat, lng,
+    accuracy: Math.round(accuracy),
+    comment: comment,
+    label: now.toLocaleString('ja-JP', {
+      year:'numeric', month:'2-digit', day:'2-digit',
+      hour:'2-digit', minute:'2-digit', second:'2-digit'
+    })
+  };
+  locations.push(entry);
+  saveData();
+  renderAll();
+  map.setView([lat, lng], 16);
+  const msg = comment
+    ? `記録完了 ✓ 「${comment}」（精度 ±${entry.accuracy}m）`
+    : `記録完了 ✓ ${entry.label}（精度 ±${entry.accuracy}m）`;
+  setStatus(msg, 'success');
+  document.getElementById('commentDialog').classList.remove('show');
+  document.getElementById('btnRecord').disabled = false;
+  pendingPosition = null;
+}
+
+// Enterキーでも確定
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') cancelRecord();
+});
+
 function renderAll() {
   markers.forEach(m => map.removeLayer(m));
   markers = [];
 
   locations.forEach((loc, i) => {
-    const m = L.marker([loc.lat, loc.lng])
-      .addTo(map)
-      .bindPopup(`<b>#${i+1}</b><br>${loc.label}<br>精度: ±${loc.accuracy}m<br>緯度: ${loc.lat.toFixed(6)}<br>経度: ${loc.lng.toFixed(6)}`);
+    const popup = `<b>#${i+1}</b>${loc.comment ? '<br>💬 ' + loc.comment : ''}<br>${loc.label}<br>精度: ±${loc.accuracy}m<br>緯度: ${loc.lat.toFixed(6)}<br>経度: ${loc.lng.toFixed(6)}`;
+    const m = L.marker([loc.lat, loc.lng]).addTo(map).bindPopup(popup);
     markers.push(m);
   });
 
@@ -277,22 +383,117 @@ function renderLog() {
   }
   el.innerHTML = [...locations].reverse().map((loc, ri) => {
     const i = locations.length - 1 - ri;
-    return `<div class="log-item" onclick="map.setView([${loc.lat},${loc.lng}],17); markers[${i}].openPopup();">
+    return `<div class="log-item" id="logitem-${loc.id}" onclick="focusMarker(${i})">
       <div class="log-num">${i+1}</div>
       <div class="log-info">
         <div class="log-time">${loc.label}</div>
+        ${loc.comment ? `<div class="log-comment">💬 ${loc.comment}</div>` : ''}
         <div class="log-coords">${loc.lat.toFixed(5)}, ${loc.lng.toFixed(5)}</div>
         <div class="log-acc">精度 ±${loc.accuracy}m</div>
       </div>
-      <button class="log-del" onclick="event.stopPropagation(); deleteEntry(${loc.id})" aria-label="削除">×</button>
+      <div class="log-actions">
+        <button class="log-btn route-btn" onclick="event.stopPropagation(); showRoute(${loc.id})" title="経路表示">🗺</button>
+        <button class="log-btn del-btn" onclick="event.stopPropagation(); deleteEntry(${loc.id})" title="削除">×</button>
+      </div>
     </div>`;
   }).join('');
+}
+
+function focusMarker(i) {
+  map.setView([locations[i].lat, locations[i].lng], 17);
+  markers[i].openPopup();
+}
+
+// 経路表示
+function showRoute(id) {
+  const dest = locations.find(l => l.id === id);
+  if (!dest) return;
+
+  setStatus('現在地を取得して経路を計算中...', 'loading');
+
+  navigator.geolocation.getCurrentPosition(
+    async (pos) => {
+      const { latitude: lat, longitude: lng } = pos.coords;
+
+      // 現在地マーカー更新
+      if (currentLocationMarker) map.removeLayer(currentLocationMarker);
+      currentLocationMarker = L.circleMarker([lat, lng], {
+        radius: 10, fillColor: '#38d9a9', color: '#fff',
+        weight: 2, opacity: 1, fillOpacity: 0.9
+      }).addTo(map).bindPopup('📍 現在地');
+
+      // 既存ルート削除
+      if (routeLayer) { map.removeLayer(routeLayer); routeLayer = null; }
+
+      // ログアイテムをハイライト
+      document.querySelectorAll('.log-item').forEach(el => el.classList.remove('active-route'));
+      const el = document.getElementById('logitem-' + id);
+      if (el) el.classList.add('active-route');
+
+      // ORS APIで経路取得
+      try {
+        const url = `https://api.openrouteservice.org/v2/directions/driving-car/geojson`;
+        const body = {
+          coordinates: [[lng, lat], [dest.lng, dest.lat]]
+        };
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': ORS_API_KEY
+          },
+          body: JSON.stringify(body)
+        });
+
+        if (!res.ok) throw new Error('API error');
+        const data = await res.json();
+        const coords = data.features[0].geometry.coordinates.map(c => [c[1], c[0]]);
+        const summary = data.features[0].properties.summary;
+        const dist = (summary.distance / 1000).toFixed(1);
+        const time = Math.round(summary.duration / 60);
+
+        routeLayer = L.polyline(coords, {
+          color: '#f5a623', weight: 5, opacity: 0.85
+        }).addTo(map);
+
+        const bounds = L.latLngBounds([[lat, lng], [dest.lat, dest.lng]]);
+        map.fitBounds(bounds.pad(0.2));
+
+        const destName = dest.comment || `#${locations.indexOf(dest)+1}`;
+        setStatus(`🗺 ${destName} まで ${dist}km・約${time}分`, 'warn');
+        document.getElementById('btnClearRoute').disabled = false;
+
+      } catch(e) {
+        // APIが失敗した場合は直線で表示
+        if (routeLayer) map.removeLayer(routeLayer);
+        routeLayer = L.polyline([[lat, lng], [dest.lat, dest.lng]], {
+          color: '#f5a623', weight: 3, opacity: 0.7, dashArray: '8,8'
+        }).addTo(map);
+        map.fitBounds(L.latLngBounds([[lat, lng], [dest.lat, dest.lng]]).pad(0.2));
+        setStatus('直線距離を表示（経路API接続失敗）', 'warn');
+        document.getElementById('btnClearRoute').disabled = false;
+      }
+    },
+    (err) => {
+      setStatus('現在地を取得できませんでした', 'danger');
+    },
+    { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 }
+  );
+}
+
+function clearRoute() {
+  if (routeLayer) { map.removeLayer(routeLayer); routeLayer = null; }
+  if (currentLocationMarker) { map.removeLayer(currentLocationMarker); currentLocationMarker = null; }
+  document.querySelectorAll('.log-item').forEach(el => el.classList.remove('active-route'));
+  document.getElementById('btnClearRoute').disabled = true;
+  setStatus('経路を消しました', '');
 }
 
 function deleteEntry(id) {
   if (!confirm('この記録を削除しますか？')) return;
   locations = locations.filter(l => l.id !== id);
   saveData();
+  clearRoute();
   renderAll();
   setStatus('1件削除しました', '');
 }
@@ -302,14 +503,17 @@ function clearAll() {
   if (!confirm(locations.length + '件すべて削除しますか？')) return;
   locations = [];
   saveData();
+  clearRoute();
   renderAll();
   setStatus('全データを削除しました', '');
 }
 
 function exportCSV() {
   if (locations.length === 0) { setStatus('エクスポートするデータがありません', 'danger'); return; }
-  const header = 'No,日時,緯度,経度,精度(m)';
-  const rows = locations.map((l, i) => `${i+1},${l.label},${l.lat},${l.lng},${l.accuracy}`);
+  const header = 'No,日時,コメント,緯度,経度,精度(m)';
+  const rows = locations.map((l, i) =>
+    `${i+1},${l.label},"${(l.comment||'').replace(/"/g,'""')}",${l.lat},${l.lng},${l.accuracy}`
+  );
   const csv = '\uFEFF' + [header, ...rows].join('\n');
   const a = document.createElement('a');
   a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
