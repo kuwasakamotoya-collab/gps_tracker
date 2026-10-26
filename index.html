@@ -39,7 +39,7 @@
     font-size: 11px; font-weight: 700;
     padding: 3px 9px; border-radius: 99px;
   }
-  .main { padding: 14px 14px 0; }
+  .main { padding: 14px 14px 0; max-width: 720px; margin: 0 auto; }
 
   #statusBar {
     background: var(--surface); border: 1px solid var(--border);
@@ -74,7 +74,10 @@
   .btn-route { background: var(--surface2); color: var(--warn); border: 1px solid var(--warn) !important; }
   .btn-route:disabled { opacity: 0.4; cursor: not-allowed; }
   .btn-csv { background: var(--surface2); color: var(--accent2); border: 1px solid var(--accent2) !important; }
-  .btn-del  { background: var(--surface2); color: var(--danger);  border: 1px solid var(--danger)  !important; }
+  .btn-open { background: var(--surface2); color: var(--accent); border: 1px solid var(--accent) !important; }
+  .btn-unload { background: var(--surface2); color: var(--accent); border: 1px solid var(--accent) !important; }
+  .btn-unload:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-del  { background: var(--surface2); color: var(--danger);  border: 1px solid var(--danger)  !important; grid-column: 1 / -1; }
 
   .section-title {
     font-size: 11px; font-weight: 700; letter-spacing: 0.08em;
@@ -118,6 +121,17 @@
 
   .empty { text-align: center; color: var(--text2); font-size: 14px; padding: 32px 0; }
 
+  /* 読み込んだCSVの番号ピン */
+  .num-pin {
+    background: var(--accent); color: #fff;
+    border: 2px solid #fff; border-radius: 50%;
+    width: 24px; height: 24px; line-height: 20px;
+    text-align: center; font-size: 11px; font-weight: 700;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.5);
+  }
+  .num-pin.first { background: #38d9a9; color: #0f1117; }
+  .num-pin.last  { background: #f5a623; color: #0f1117; }
+
   /* ダイアログ共通 */
   .dialog-overlay {
     display: none; position: fixed; inset: 0;
@@ -131,13 +145,15 @@
     width: 100%; max-width: 480px;
   }
   .dialog h2 { font-size: 16px; font-weight: 700; margin-bottom: 16px; }
-  .dialog textarea {
+  .dialog textarea, .dialog input[type="text"] {
     width: 100%; background: var(--surface2);
     border: 1px solid var(--border); border-radius: 10px;
     color: var(--text); font-size: 15px; padding: 12px;
-    resize: none; outline: none; font-family: inherit; height: 80px;
+    resize: none; outline: none; font-family: inherit;
   }
-  .dialog textarea:focus { border-color: var(--accent); }
+  .dialog textarea { height: 80px; }
+  .dialog textarea:focus, .dialog input[type="text"]:focus { border-color: var(--accent); }
+  .dialog .hint { font-size: 12px; color: var(--text2); margin-top: 8px; }
 
   /* 写真選択エリア */
   .photo-area {
@@ -212,10 +228,14 @@
   <div id="map"></div>
   <div class="btn-row">
     <button class="btn-record" id="btnRecord" onclick="startRecord()">▶ 現在地を記録する</button>
+    <button class="btn-csv" onclick="openSaveDialog()">⬇ CSV保存</button>
+    <button class="btn-open" onclick="openCsvPicker()">⬆ CSVを開く</button>
     <button class="btn-route" id="btnClearRoute" onclick="clearRoute()" disabled>✕ 経路を消す</button>
-    <button class="btn-csv" onclick="exportCSV()">⬇ CSV</button>
+    <button class="btn-unload" id="btnClearLoaded" onclick="clearLoaded()" disabled>✕ 読込を消す</button>
     <button class="btn-del" onclick="clearAll()">🗑 全削除</button>
   </div>
+  <input type="file" id="fileCsv" accept="*/*" style="display:none" onchange="handleCsvFile(this)"/>
+
   <p class="section-title">記録ログ（🗺 → 経路表示）</p>
   <div class="log-list" id="logList">
     <div class="empty">まだ記録がありません</div>
@@ -249,6 +269,19 @@
   </div>
 </div>
 
+<!-- CSV 名前を付けて保存ダイアログ -->
+<div class="dialog-overlay" id="saveDialog">
+  <div class="dialog">
+    <h2>💾 名前を付けて保存</h2>
+    <input type="text" id="fileNameInput" placeholder="ファイル名" autocomplete="off"/>
+    <p class="hint">拡張子（.csv）は自動で付きます</p>
+    <div class="dialog-btns">
+      <button class="btn-cancel" onclick="closeSaveDialog()">キャンセル</button>
+      <button class="btn-save" onclick="confirmSave()">保存する</button>
+    </div>
+  </div>
+</div>
+
 <!-- 写真拡大ビューア -->
 <div id="photoViewer" onclick="closePhotoViewer()">
   <button class="close-btn" onclick="closePhotoViewer()">✕</button>
@@ -262,7 +295,15 @@ let pendingPosition = null;
 let pendingPhotoBase64 = null;
 let currentLocationMarker = null;
 let routeLayer = null;
+let loadedLayer = null;
 const ORS_API_KEY = '5b3ce3597851110001cf6248a2e2d5a34e0b4c3eb0c2e8b6e0f5b6a2';
+
+/* ---------- 共通 ---------- */
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
+}
 
 function initMap() {
   map = L.map('map', { zoomControl: true }).setView([35.5, 137.0], 9);
@@ -291,6 +332,7 @@ function setStatus(msg, type = '') {
   document.getElementById('statusText').textContent = msg;
 }
 
+/* ---------- 記録 ---------- */
 function startRecord() {
   if (!navigator.geolocation) { setStatus('位置情報に対応していません', 'danger'); return; }
   setStatus('GPS取得中...', 'loading');
@@ -390,7 +432,7 @@ function renderAll() {
   markers.forEach(m => map.removeLayer(m));
   markers = [];
   locations.forEach((loc, i) => {
-    const popup = `<b>#${i+1}</b>${loc.comment ? '<br>💬 ' + loc.comment : ''}<br>${loc.label}<br>精度: ±${loc.accuracy}m`;
+    const popup = `<b>#${i+1}</b>${loc.comment ? '<br>💬 ' + esc(loc.comment) : ''}<br>${esc(loc.label)}<br>精度: ±${esc(loc.accuracy)}m`;
     const m = L.marker([loc.lat, loc.lng]).addTo(map).bindPopup(popup);
     markers.push(m);
   });
@@ -417,10 +459,10 @@ function renderLog() {
       <div class="log-item-header">
         <div class="log-num">${i+1}</div>
         <div class="log-info">
-          <div class="log-time">${loc.label}</div>
-          ${loc.comment ? `<div class="log-comment">💬 ${loc.comment}</div>` : ''}
+          <div class="log-time">${esc(loc.label)}</div>
+          ${loc.comment ? `<div class="log-comment">💬 ${esc(loc.comment)}</div>` : ''}
           <div class="log-coords">${loc.lat.toFixed(5)}, ${loc.lng.toFixed(5)}</div>
-          <div class="log-acc">精度 ±${loc.accuracy}m${loc.photo ? ' 📷' : ''}</div>
+          <div class="log-acc">精度 ±${esc(loc.accuracy)}m${loc.photo ? ' 📷' : ''}</div>
         </div>
         <div class="log-actions">
           <button class="log-btn route-btn" onclick="event.stopPropagation(); showRoute(${loc.id})" title="経路">🗺</button>
@@ -448,6 +490,7 @@ function focusMarker(i) {
   markers[i].openPopup();
 }
 
+/* ---------- 経路 ---------- */
 function showRoute(id) {
   const dest = locations.find(l => l.id === id);
   if (!dest) return;
@@ -514,17 +557,205 @@ function clearAll() {
   setStatus('全データを削除しました', '');
 }
 
-function exportCSV() {
-  if (locations.length === 0) { setStatus('データがありません', 'danger'); return; }
+/* ---------- CSV 保存（名前を付けて保存） ---------- */
+function pad2(n) { return String(n).padStart(2, '0'); }
+
+function defaultFileName() {
+  const d = new Date();
+  return 'gps_log_' + d.getFullYear() + pad2(d.getMonth() + 1) + pad2(d.getDate())
+    + '_' + pad2(d.getHours()) + pad2(d.getMinutes());
+}
+
+function openSaveDialog() {
+  if (locations.length === 0) { setStatus('保存するデータがありません', 'danger'); return; }
+  document.getElementById('fileNameInput').value = defaultFileName();
+  document.getElementById('saveDialog').classList.add('show');
+  setTimeout(() => {
+    const input = document.getElementById('fileNameInput');
+    input.focus(); input.select();
+  }, 100);
+}
+
+function closeSaveDialog() {
+  document.getElementById('saveDialog').classList.remove('show');
+}
+
+function sanitizeFileName(name) {
+  let n = String(name || '').trim().replace(/[\\/:*?"<>|\r\n\t]/g, '_');
+  n = n.replace(/\.csv$/i, '').replace(/^\.+/, '');
+  if (!n) n = defaultFileName();
+  return n.slice(0, 100) + '.csv';
+}
+
+function buildCSV() {
   const header = 'No,日時,コメント,緯度,経度,精度(m),写真あり';
   const rows = locations.map((l, i) =>
     `${i+1},${l.label},"${(l.comment||'').replace(/"/g,'""')}",${l.lat},${l.lng},${l.accuracy},${l.photo ? 'あり' : 'なし'}`
   );
+  return '\uFEFF' + [header, ...rows].join('\r\n');
+}
+
+function confirmSave() {
+  const fileName = sanitizeFileName(document.getElementById('fileNameInput').value);
+  closeSaveDialog();
+  saveCsvFile(fileName, buildCSV());
+}
+
+function saveCsvFile(fileName, csvText) {
+  // Androidアプリ（WebView）の場合：アプリ側の保存機能を使う
+  if (window.AndroidBridge && typeof window.AndroidBridge.saveCsv === 'function') {
+    let result = '';
+    try { result = String(window.AndroidBridge.saveCsv(fileName, csvText)); }
+    catch (e) { result = 'ERR:' + e; }
+    if (result.indexOf('ERR:') === 0) {
+      setStatus('保存に失敗しました：' + result.slice(4), 'danger');
+    } else {
+      setStatus('保存しました ✓ ' + (result.indexOf('OK:') === 0 ? result.slice(3) : fileName), 'success');
+    }
+    return;
+  }
+  // アプリ側の保存機能が無いWebView
+  if (/; wv\)/.test(navigator.userAgent)) {
+    setStatus('アプリ側の保存機能が未設定です（アプリの更新が必要です）', 'danger');
+    return;
+  }
+  // パソコン・スマホのブラウザ：通常のダウンロード
+  const blob = new Blob([csvText], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent('\uFEFF' + [header,...rows].join('\n'));
-  a.download = 'gps_log_' + Date.now() + '.csv';
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
   a.click();
-  setStatus('CSVをダウンロードしました', 'success');
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+  setStatus('ダウンロードしました ✓ ' + fileName, 'success');
+}
+
+/* ---------- CSV を開いて地図に再現 ---------- */
+function openCsvPicker() {
+  const input = document.getElementById('fileCsv');
+  input.value = '';
+  input.click();
+}
+
+function decodeText(buf) {
+  try { return new TextDecoder('utf-8', { fatal: true }).decode(buf); }
+  catch (e) {
+    try { return new TextDecoder('shift_jis').decode(buf); }
+    catch (e2) { return new TextDecoder('utf-8').decode(buf); }
+  }
+}
+
+function parseCSV(text) {
+  text = text.replace(/^\uFEFF/, '');
+  const rows = [];
+  let row = [], cur = '', inQ = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQ) {
+      if (c === '"') {
+        if (text[i + 1] === '"') { cur += '"'; i++; }
+        else inQ = false;
+      } else cur += c;
+    } else {
+      if (c === '"') inQ = true;
+      else if (c === ',') { row.push(cur); cur = ''; }
+      else if (c === '\n' || c === '\r') {
+        if (c === '\r' && text[i + 1] === '\n') i++;
+        row.push(cur); cur = '';
+        if (row.length > 1 || row[0] !== '') rows.push(row);
+        row = [];
+      } else cur += c;
+    }
+  }
+  if (cur !== '' || row.length) {
+    row.push(cur);
+    if (row.length > 1 || row[0] !== '') rows.push(row);
+  }
+  return rows;
+}
+
+function handleCsvFile(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onerror = () => setStatus('ファイルを読み込めませんでした', 'danger');
+  reader.onload = (e) => {
+    try {
+      showCsvOnMap(decodeText(e.target.result), file.name);
+    } catch (err) {
+      setStatus('CSVを読み取れませんでした', 'danger');
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function findCol(header, names) {
+  return header.findIndex(h => {
+    const t = String(h).trim().toLowerCase();
+    return names.some(n => t.indexOf(n) === 0);
+  });
+}
+
+function showCsvOnMap(text, fileName) {
+  const rows = parseCSV(text);
+  if (rows.length < 2) { setStatus('CSVにデータがありません', 'danger'); return; }
+
+  const header = rows[0];
+  let iTime = findCol(header, ['日時', 'time', 'date']);
+  let iNote = findCol(header, ['コメント', 'comment', 'memo', 'メモ']);
+  let iLat  = findCol(header, ['緯度', 'latitude', 'lat']);
+  let iLng  = findCol(header, ['経度', 'longitude', 'lng', 'lon']);
+  let iAcc  = findCol(header, ['精度', 'accuracy']);
+  // 見出しが見つからないときは、このアプリのCSVの列順を使う
+  if (iLat < 0 || iLng < 0) { iTime = 1; iNote = 2; iLat = 3; iLng = 4; iAcc = 5; }
+
+  const points = [];
+  for (let r = 1; r < rows.length; r++) {
+    const row = rows[r];
+    const lat = parseFloat(row[iLat]);
+    const lng = parseFloat(row[iLng]);
+    if (!isFinite(lat) || !isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) continue;
+    points.push({
+      lat, lng,
+      time: iTime >= 0 ? row[iTime] : '',
+      note: iNote >= 0 ? row[iNote] : '',
+      acc:  iAcc  >= 0 ? row[iAcc]  : ''
+    });
+  }
+  if (points.length === 0) {
+    setStatus('緯度・経度の列が見つかりませんでした', 'danger'); return;
+  }
+
+  clearLoaded(true);
+  loadedLayer = L.layerGroup().addTo(map);
+
+  if (points.length > 1) {
+    L.polyline(points.map(p => [p.lat, p.lng]), {
+      color: '#4f8ef7', weight: 4, opacity: 0.85
+    }).addTo(loadedLayer);
+  }
+  points.forEach((p, i) => {
+    const cls = 'num-pin' + (i === 0 ? ' first' : (i === points.length - 1 && points.length > 1 ? ' last' : ''));
+    const icon = L.divIcon({
+      className: '', iconSize: [24, 24], iconAnchor: [12, 12],
+      html: `<div class="${cls}">${i + 1}</div>`
+    });
+    const popup = `<b>#${i + 1}</b>${p.note ? '<br>💬 ' + esc(p.note) : ''}`
+      + `${p.time ? '<br>' + esc(p.time) : ''}${p.acc ? '<br>精度: ±' + esc(p.acc) + 'm' : ''}`;
+    L.marker([p.lat, p.lng], { icon }).addTo(loadedLayer).bindPopup(popup);
+  });
+
+  map.fitBounds(L.latLngBounds(points.map(p => [p.lat, p.lng])).pad(0.2));
+  document.getElementById('btnClearLoaded').disabled = false;
+  setStatus(`📂 ${fileName}：${points.length}件を地図に再現しました（緑=最初、橙=最後）`, 'success');
+}
+
+function clearLoaded(silent) {
+  if (loadedLayer) { map.removeLayer(loadedLayer); loadedLayer = null; }
+  document.getElementById('btnClearLoaded').disabled = true;
+  if (silent !== true) setStatus('読み込んだCSVの表示を消しました', '');
 }
 
 initMap();
