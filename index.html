@@ -71,6 +71,7 @@
   .btn-row button:active { transform: scale(0.97); }
   .btn-record { background: var(--accent); color: #fff; grid-column: 1 / -1; font-size: 16px; padding: 16px; }
   .btn-record:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-record.measuring { background: var(--warn); color: #0f1117; }
   .btn-route { background: var(--surface2); color: var(--warn); border: 1px solid var(--warn) !important; }
   .btn-route:disabled { opacity: 0.4; cursor: not-allowed; }
   .btn-csv { background: var(--surface2); color: var(--accent2); border: 1px solid var(--accent2) !important; }
@@ -154,6 +155,10 @@
   .dialog textarea { height: 80px; }
   .dialog textarea:focus, .dialog input[type="text"]:focus { border-color: var(--accent); }
   .dialog .hint { font-size: 12px; color: var(--text2); margin-top: 8px; }
+  .dialog .acc-info { font-size: 13px; color: var(--accent2); margin: -6px 0 12px; }
+  .dialog .warn-text { font-size: 15px; line-height: 1.6; color: var(--warn); }
+  .btn-retry { background: var(--accent); color: #fff; }
+  .btn-force { background: var(--surface2); color: var(--warn); border: 1px solid var(--warn) !important; }
 
   /* 写真選択エリア */
   .photo-area {
@@ -246,6 +251,7 @@
 <div class="dialog-overlay" id="commentDialog">
   <div class="dialog">
     <h2>📝 記録を入力</h2>
+    <p class="acc-info" id="accInfo"></p>
     <textarea id="commentInput" placeholder="コメントを入力（任意）"></textarea>
 
     <!-- 写真エリア -->
@@ -282,6 +288,20 @@
   </div>
 </div>
 
+<!-- 精度が低いときの警告ダイアログ -->
+<div class="dialog-overlay" id="warnDialog">
+  <div class="dialog">
+    <h2>⚠ 精度が低めです</h2>
+    <p class="warn-text" id="warnText"></p>
+    <p class="hint">屋外の空が開けた場所に移動して、もう一度測定すると精度が上がりやすくなります。</p>
+    <div class="dialog-btns">
+      <button class="btn-retry" onclick="warnRetry()">再測定</button>
+      <button class="btn-force" onclick="warnForce()">このまま記録</button>
+      <button class="btn-cancel" style="grid-column: 1 / -1;" onclick="warnCancel()">キャンセル</button>
+    </div>
+  </div>
+</div>
+
 <!-- 写真拡大ビューア -->
 <div id="photoViewer" onclick="closePhotoViewer()">
   <button class="close-btn" onclick="closePhotoViewer()">✕</button>
@@ -296,6 +316,10 @@ let pendingPhotoBase64 = null;
 let currentLocationMarker = null;
 let routeLayer = null;
 let loadedLayer = null;
+const MEASURE_SECONDS = 20;   // 記録ボタンを押してから測定する秒数
+const ACC_LIMIT = 20;         // この値(m)より精度が悪い場合は警告を出す
+let watchId = null, measureTimer = null, measureLeft = 0;
+let bestPos = null, fixCount = 0, lastAcc = null, measuring = false;
 const ORS_API_KEY = '5b3ce3597851110001cf6248a2e2d5a34e0b4c3eb0c2e8b6e0f5b6a2';
 
 /* ---------- 共通 ---------- */
@@ -334,26 +358,118 @@ function setStatus(msg, type = '') {
 
 /* ---------- 記録 ---------- */
 function startRecord() {
+  // 測定中にもう一度押すと、測定を中止する
+  if (measuring) {
+    stopMeasure();
+    resetRecordButton();
+    setStatus('測定を中止しました', '');
+    return;
+  }
   if (!navigator.geolocation) { setStatus('位置情報に対応していません', 'danger'); return; }
-  setStatus('GPS取得中...', 'loading');
-  document.getElementById('btnRecord').disabled = true;
-  navigator.geolocation.getCurrentPosition(
-    (pos) => {
-      pendingPosition = pos;
-      pendingPhotoBase64 = null;
-      document.getElementById('commentInput').value = '';
-      document.getElementById('previewImg').className = '';
-      document.getElementById('previewImg').src = '';
-      document.getElementById('photoAreaLabel').style.display = 'flex';
-      document.getElementById('commentDialog').classList.add('show');
-    },
-    (err) => {
-      const msgs = {1:'位置情報の許可が必要です', 2:'位置情報を取得できません', 3:'タイムアウトしました'};
-      setStatus(msgs[err.code] || 'エラー', 'danger');
-      document.getElementById('btnRecord').disabled = false;
-    },
-    { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }
-  );
+  measuring = true;
+  bestPos = null; fixCount = 0; lastAcc = null;
+  measureLeft = MEASURE_SECONDS;
+  const btn = document.getElementById('btnRecord');
+  btn.classList.add('measuring');
+  updateMeasureStatus();
+  watchId = navigator.geolocation.watchPosition(onFix, onFixError, {
+    enableHighAccuracy: true, timeout: 30000, maximumAge: 0
+  });
+  measureTimer = setInterval(() => {
+    measureLeft--;
+    if (measureLeft <= 0) finishMeasure();
+    else updateMeasureStatus();
+  }, 1000);
+}
+
+function onFix(pos) {
+  fixCount++;
+  lastAcc = pos.coords.accuracy;
+  // 誤差が最も小さい値を残す（同じなら新しい方）
+  if (!bestPos || pos.coords.accuracy <= bestPos.coords.accuracy) bestPos = pos;
+  updateMeasureStatus();
+}
+
+function onFixError(err) {
+  // 許可がないときだけ即終了。それ以外は一時的な失敗として測定を続ける
+  if (err.code === 1) {
+    stopMeasure();
+    resetRecordButton();
+    setStatus('位置情報の許可が必要です', 'danger');
+  }
+}
+
+function updateMeasureStatus() {
+  const btn = document.getElementById('btnRecord');
+  btn.textContent = `■ 測定を中止（残り${measureLeft}秒）`;
+  let msg = `測定中… 残り${measureLeft}秒`;
+  if (lastAcc !== null) {
+    msg += `｜現在 ±${Math.round(lastAcc)}m｜最良 ±${Math.round(bestPos.coords.accuracy)}m（${fixCount}回）`;
+  } else {
+    msg += '｜GPS信号を待っています';
+  }
+  setStatus(msg, 'loading');
+}
+
+function stopMeasure() {
+  if (watchId !== null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
+  if (measureTimer !== null) { clearInterval(measureTimer); measureTimer = null; }
+  measuring = false;
+}
+
+function resetRecordButton() {
+  const btn = document.getElementById('btnRecord');
+  btn.classList.remove('measuring');
+  btn.disabled = false;
+  btn.textContent = '▶ 現在地を記録する';
+}
+
+function finishMeasure() {
+  stopMeasure();
+  resetRecordButton();
+  if (!bestPos) {
+    setStatus('位置を取得できませんでした。屋外でもう一度お試しください', 'danger');
+    return;
+  }
+  pendingPosition = bestPos;
+  const acc = Math.round(bestPos.coords.accuracy);
+  if (acc > ACC_LIMIT) {
+    document.getElementById('warnText').textContent =
+      `${MEASURE_SECONDS}秒間の最良値でも、精度は ±${acc}m でした（基準：±${ACC_LIMIT}m以内）。`;
+    document.getElementById('warnDialog').classList.add('show');
+    setStatus(`⚠ 精度 ±${acc}m（基準 ±${ACC_LIMIT}m より低い）`, 'warn');
+  } else {
+    openCommentDialog();
+  }
+}
+
+function openCommentDialog() {
+  const acc = Math.round(pendingPosition.coords.accuracy);
+  pendingPhotoBase64 = null;
+  document.getElementById('accInfo').textContent =
+    `測定結果：精度 ±${acc}m（${MEASURE_SECONDS}秒間の最良値）`;
+  document.getElementById('commentInput').value = '';
+  document.getElementById('previewImg').className = '';
+  document.getElementById('previewImg').src = '';
+  document.getElementById('photoAreaLabel').style.display = 'flex';
+  document.getElementById('commentDialog').classList.add('show');
+}
+
+function warnRetry() {
+  document.getElementById('warnDialog').classList.remove('show');
+  pendingPosition = null;
+  startRecord();
+}
+
+function warnForce() {
+  document.getElementById('warnDialog').classList.remove('show');
+  if (pendingPosition) openCommentDialog();
+}
+
+function warnCancel() {
+  document.getElementById('warnDialog').classList.remove('show');
+  pendingPosition = null;
+  setStatus('キャンセルしました', '');
 }
 
 function openCamera() {
@@ -397,7 +513,7 @@ function cancelRecord() {
   pendingPosition = null;
   pendingPhotoBase64 = null;
   document.getElementById('commentDialog').classList.remove('show');
-  document.getElementById('btnRecord').disabled = false;
+  resetRecordButton();
   setStatus('キャンセルしました', '');
 }
 
@@ -423,7 +539,7 @@ function confirmRecord() {
   const msg = comment ? `記録完了 ✓ 「${comment}」` : `記録完了 ✓ ${entry.label}`;
   setStatus(msg + `（精度 ±${entry.accuracy}m）`, 'success');
   document.getElementById('commentDialog').classList.remove('show');
-  document.getElementById('btnRecord').disabled = false;
+  resetRecordButton();
   pendingPosition = null;
   pendingPhotoBase64 = null;
 }
