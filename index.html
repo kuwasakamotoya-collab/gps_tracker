@@ -81,6 +81,13 @@
     background: #4f8ef7; color: #fff; font-size: 13px; font-weight: 700; cursor: pointer;
   }
 
+  .dist-tip {
+    background: #1a1d27; color: #fff; border: 1px solid #e879f9;
+    font-size: 13px; font-weight: 700; padding: 4px 8px; border-radius: 8px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.5);
+  }
+  .dist-tip::before { display: none; }
+
   .btn-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
   .btn-row button {
     padding: 13px 8px; border-radius: var(--radius); border: none;
@@ -683,8 +690,7 @@ function renderAll(keepView) {
   markers.forEach(m => map.removeLayer(m));
   markers = [];
   locations.forEach((loc, i) => {
-    const popup = `<b>#${i+1}</b>${loc.comment ? '<br>💬 ' + esc(loc.comment).replace(/\n/g, '<br>') : ''}<br>${esc(loc.label)}<br>緯度: ${loc.lat.toFixed(5)}<br>経度: ${loc.lng.toFixed(5)}<br>精度: ±${esc(loc.accuracy)}m<br><button class="popup-edit" onclick="openEditComment(${loc.id})">✏ コメントを編集</button>`;
-    const m = L.marker([loc.lat, loc.lng], { icon: smallIcon }).addTo(map).bindPopup(popup);
+    const m = L.marker([loc.lat, loc.lng], { icon: smallIcon }).addTo(map).bindPopup(() => popupHtml(loc));
     markers.push(m);
   });
   if (!keepView) {
@@ -736,6 +742,88 @@ function viewPhoto(id) {
 
 function closePhotoViewer() {
   document.getElementById('photoViewer').classList.remove('show');
+}
+
+/* ---------- 記録ピンの吹き出し ---------- */
+function popupHtml(loc) {
+  const idx = locations.findIndex(l => l.id === loc.id);
+  return `<b>#${idx + 1}</b>${loc.comment ? '<br>💬 ' + esc(loc.comment).replace(/\n/g, '<br>') : ''}`
+    + `<br>${esc(loc.label)}<br>緯度: ${loc.lat.toFixed(5)}<br>経度: ${loc.lng.toFixed(5)}<br>精度: ±${esc(loc.accuracy)}m<br>`
+    + `<button class="popup-edit" onclick="openEditComment(${loc.id})">✏ コメントを編集</button><br>`
+    + `<button class="popup-edit" style="background:#e879f9;color:#111" onclick="pickDistance(${loc.id})">${distBtnLabel(loc.id)}</button>`;
+}
+
+/* ---------- 2地点の距離 ---------- */
+let distStartId = null, distLayer = null;
+
+function haversine(lat1, lng1, lat2, lng2) {
+  const R = 6371008.8, rad = Math.PI / 180;
+  const dLat = (lat2 - lat1) * rad, dLng = (lng2 - lng1) * rad;
+  const a = Math.sin(dLat / 2) ** 2
+    + Math.cos(lat1 * rad) * Math.cos(lat2 * rad) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+
+function fmtDist(m) {
+  return m >= 1000 ? (m / 1000).toFixed(2) + ' km' : Math.round(m) + ' m';
+}
+
+function distBtnLabel(id) {
+  if (distStartId === null) return '📏 距離の起点にする';
+  if (distStartId === id) return '📏 起点を解除';
+  const si = locations.findIndex(l => l.id === distStartId);
+  return `📏 #${si + 1} までの距離`;
+}
+
+function clearDistLine() {
+  if (distLayer) { map.removeLayer(distLayer); distLayer = null; }
+}
+
+function resetDistance() {
+  distStartId = null;
+  clearDistLine();
+}
+
+function pickDistance(id) {
+  const loc = locations.find(l => l.id === id);
+  if (!loc) return;
+  const idx = locations.indexOf(loc);
+  map.closePopup();
+  if (distStartId === null) {
+    clearDistLine();
+    distStartId = id;
+    setStatus(`📏 起点 #${idx + 1} を選びました。もう一つの地点のピンをタップして「#${idx + 1} までの距離」を押してください`, 'warn');
+    return;
+  }
+  if (distStartId === id) {
+    distStartId = null;
+    setStatus('起点を解除しました', '');
+    return;
+  }
+  const start = locations.find(l => l.id === distStartId);
+  if (!start) { distStartId = null; return; }
+  const si = locations.indexOf(start);
+  const d = haversine(start.lat, start.lng, loc.lat, loc.lng);
+  clearDistLine();
+  const pts = [[start.lat, start.lng], [loc.lat, loc.lng]];
+  distLayer = L.layerGroup().addTo(map);
+  const line = L.polyline(pts, { color: '#e879f9', weight: 4, opacity: 0.9, dashArray: '8,8' })
+    .addTo(distLayer)
+    .bindPopup(`<b>#${si + 1} ⇔ #${idx + 1}</b><br>直線距離: ${fmtDist(d)}<br>`
+      + `<button class="popup-edit" onclick="clearDistance()">距離の線を消す</button>`);
+  L.tooltip({ permanent: true, direction: 'center', className: 'dist-tip' })
+    .setLatLng([(start.lat + loc.lat) / 2, (start.lng + loc.lng) / 2])
+    .setContent(fmtDist(d))
+    .addTo(distLayer);
+  map.fitBounds(L.latLngBounds(pts).pad(0.3));
+  distStartId = null;
+  setStatus(`📏 #${si + 1} ⇔ #${idx + 1}：直線距離 ${fmtDist(d)}`, 'success');
+}
+
+function clearDistance() {
+  resetDistance();
+  map.closePopup();
+  setStatus('距離の線を消しました', '');
 }
 
 /* ---------- 地図のピンからコメントを編集 ---------- */
@@ -829,14 +917,14 @@ function clearRoute() {
 function deleteEntry(id) {
   if (!confirm('この記録を削除しますか？')) return;
   locations = locations.filter(l => l.id !== id);
-  saveData(); clearRoute(); renderAll();
+  saveData(); clearRoute(); resetDistance(); renderAll();
   setStatus('1件削除しました', '');
 }
 
 function clearAll() {
   if (locations.length === 0) return;
   if (!confirm(locations.length + '件すべて削除しますか？')) return;
-  locations = []; saveData(); clearRoute(); renderAll();
+  locations = []; saveData(); clearRoute(); resetDistance(); renderAll();
   setStatus('全データを削除しました', '');
 }
 
