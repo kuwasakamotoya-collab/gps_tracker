@@ -414,7 +414,7 @@ function showNowPin() {
       if (nowMarker) map.removeLayer(nowMarker);
       nowMarker = L.marker([lat, lng], { icon: nowIcon, zIndexOffset: 1000 })
         .addTo(map)
-        .bindPopup(`<b>📍 現在地</b><br>精度: ±${Math.round(accuracy)}m<br>${lat.toFixed(5)}, ${lng.toFixed(5)}<br>`
+        .bindPopup(`<b>📍 現在地</b><br>緯度: ${lat.toFixed(5)}<br>経度: ${lng.toFixed(5)}<br>精度: ±${Math.round(accuracy)}m<br>`
           + `<button class="popup-edit" onclick="clearNowPin()">ピンを消す</button>`);
       if (!map.getBounds().contains([lat, lng])) map.panTo([lat, lng]);
       setStatus(`📍 現在地を表示しました（精度 ±${Math.round(accuracy)}m）`, 'success');
@@ -683,7 +683,7 @@ function renderAll(keepView) {
   markers.forEach(m => map.removeLayer(m));
   markers = [];
   locations.forEach((loc, i) => {
-    const popup = `<b>#${i+1}</b>${loc.comment ? '<br>💬 ' + esc(loc.comment).replace(/\n/g, '<br>') : ''}<br>${esc(loc.label)}<br>精度: ±${esc(loc.accuracy)}m<br><button class="popup-edit" onclick="openEditComment(${loc.id})">✏ コメントを編集</button>`;
+    const popup = `<b>#${i+1}</b>${loc.comment ? '<br>💬 ' + esc(loc.comment).replace(/\n/g, '<br>') : ''}<br>${esc(loc.label)}<br>緯度: ${loc.lat.toFixed(5)}<br>経度: ${loc.lng.toFixed(5)}<br>精度: ±${esc(loc.accuracy)}m<br><button class="popup-edit" onclick="openEditComment(${loc.id})">✏ コメントを編集</button>`;
     const m = L.marker([loc.lat, loc.lng], { icon: smallIcon }).addTo(map).bindPopup(popup);
     markers.push(m);
   });
@@ -1026,7 +1026,8 @@ function showCsvOnMap(text, fileName) {
       html: `<div class="${cls}">${i + 1}</div>`
     });
     const popup = `<b>#${i + 1}</b>${p.note ? '<br>💬 ' + esc(p.note) : ''}`
-      + `${p.time ? '<br>' + esc(p.time) : ''}${p.acc ? '<br>精度: ±' + esc(p.acc) + 'm' : ''}`;
+      + `${p.time ? '<br>' + esc(p.time) : ''}<br>緯度: ${p.lat.toFixed(5)}<br>経度: ${p.lng.toFixed(5)}`
+      + `${p.acc ? '<br>精度: ±' + esc(p.acc) + 'm' : ''}`;
     L.marker([p.lat, p.lng], { icon }).addTo(loadedLayer).bindPopup(popup);
   });
 
