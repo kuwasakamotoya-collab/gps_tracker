@@ -333,6 +333,17 @@ const MEASURE_SECONDS = 20;   // 記録ボタンを押してから測定する�
 const ACC_LIMIT = 20;         // この値(m)より精度が悪い場合は警告を出す
 let watchId = null, measureTimer = null, measureLeft = 0;
 let bestPos = null, fixCount = 0, lastAcc = null, measuring = false;
+// 地図のピン（風船）のサイズ。標準(25x41)の半分
+const LEAFLET_IMG = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/';
+const smallIcon = L.icon({
+  iconUrl: LEAFLET_IMG + 'marker-icon-2x.png',
+  shadowUrl: LEAFLET_IMG + 'marker-shadow.png',
+  iconSize: [13, 21],
+  iconAnchor: [6, 21],
+  popupAnchor: [1, -18],
+  shadowSize: [21, 21],
+  shadowAnchor: [6, 21]
+});
 const ORS_API_KEY = '5b3ce3597851110001cf6248a2e2d5a34e0b4c3eb0c2e8b6e0f5b6a2';
 
 /* ---------- 共通 ---------- */
@@ -601,7 +612,7 @@ function renderAll() {
   markers = [];
   locations.forEach((loc, i) => {
     const popup = `<b>#${i+1}</b>${loc.comment ? '<br>💬 ' + esc(loc.comment) : ''}<br>${esc(loc.label)}<br>精度: ±${esc(loc.accuracy)}m`;
-    const m = L.marker([loc.lat, loc.lng]).addTo(map).bindPopup(popup);
+    const m = L.marker([loc.lat, loc.lng], { icon: smallIcon }).addTo(map).bindPopup(popup);
     markers.push(m);
   });
   if (locations.length > 1) {
