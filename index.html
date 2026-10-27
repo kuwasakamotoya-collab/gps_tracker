@@ -378,6 +378,59 @@ function initMap() {
     attribution: '© OpenStreetMap contributors', maxZoom: 19
   }).addTo(map);
   addFullscreenControl();
+  map.on('click', onMapClick);
+  map.on('popupclose', () => { lastPopupClose = Date.now(); });
+}
+
+/* ---------- 地図をタップ → 現在地を橙色のピンで表示 ---------- */
+// 橙色ピンのサイズ（標準の青ピンは 13x21）
+const NOW_PIN_SIZE = [16, 26];
+const nowPinSvg = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 25 41'>"
+  + "<path d='M12.5 0C5.6 0 0 5.6 0 12.5 0 21.9 12.5 41 12.5 41S25 21.9 25 12.5C25 5.6 19.4 0 12.5 0z' fill='#f5a623' stroke='#ffffff' stroke-width='1.5'/>"
+  + "<circle cx='12.5' cy='12.5' r='4.5' fill='#ffffff'/></svg>";
+const nowIcon = L.icon({
+  iconUrl: 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(nowPinSvg),
+  iconSize: NOW_PIN_SIZE,
+  iconAnchor: [NOW_PIN_SIZE[0] / 2, NOW_PIN_SIZE[1]],
+  popupAnchor: [0, -(NOW_PIN_SIZE[1] - 4)]
+});
+let nowMarker = null, lastPopupClose = 0, locatingNow = false;
+
+function onMapClick() {
+  // 吹き出しを閉じるためのタップ、測定中、取得中は何もしない
+  if (Date.now() - lastPopupClose < 400) return;
+  if (measuring || locatingNow) return;
+  showNowPin();
+}
+
+function showNowPin() {
+  if (!navigator.geolocation) { setStatus('位置情報に対応していません', 'danger'); return; }
+  locatingNow = true;
+  setStatus('現在地を取得中...', 'loading');
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      locatingNow = false;
+      const { latitude: lat, longitude: lng, accuracy } = pos.coords;
+      if (nowMarker) map.removeLayer(nowMarker);
+      nowMarker = L.marker([lat, lng], { icon: nowIcon, zIndexOffset: 1000 })
+        .addTo(map)
+        .bindPopup(`<b>📍 現在地</b><br>精度: ±${Math.round(accuracy)}m<br>${lat.toFixed(5)}, ${lng.toFixed(5)}<br>`
+          + `<button class="popup-edit" onclick="clearNowPin()">ピンを消す</button>`);
+      if (!map.getBounds().contains([lat, lng])) map.panTo([lat, lng]);
+      setStatus(`📍 現在地を表示しました（精度 ±${Math.round(accuracy)}m）`, 'success');
+    },
+    (err) => {
+      locatingNow = false;
+      const msgs = { 1: '位置情報の許可が必要です', 2: '位置情報を取得できません', 3: 'タイムアウトしました' };
+      setStatus(msgs[err.code] || 'エラー', 'danger');
+    },
+    { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+  );
+}
+
+function clearNowPin() {
+  if (nowMarker) { map.removeLayer(nowMarker); nowMarker = null; }
+  setStatus('現在地のピンを消しました', '');
 }
 
 /* ---------- 地図の拡大（全画面）・縮小 ---------- */
