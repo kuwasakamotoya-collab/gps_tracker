@@ -75,6 +75,12 @@
     box-shadow: 0 1px 5px rgba(0,0,0,0.4);
   }
 
+  /* 地図の吹き出し内のコメント編集ボタン */
+  .popup-edit {
+    margin-top: 8px; padding: 7px 12px; border: none; border-radius: 8px;
+    background: #4f8ef7; color: #fff; font-size: 13px; font-weight: 700; cursor: pointer;
+  }
+
   .btn-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
   .btn-row button {
     padding: 13px 8px; border-radius: var(--radius); border: none;
@@ -297,6 +303,19 @@
     <div class="dialog-btns">
       <button class="btn-cancel" onclick="closeSaveDialog()">キャンセル</button>
       <button class="btn-save" onclick="confirmSave()">保存する</button>
+    </div>
+  </div>
+</div>
+
+<!-- コメント編集ダイアログ -->
+<div class="dialog-overlay" id="editDialog">
+  <div class="dialog">
+    <h2 id="editTitle">✏ コメントを編集</h2>
+    <textarea id="editInput" placeholder="コメントを入力"></textarea>
+    <p class="hint">空にして保存すると、コメントを消せます。</p>
+    <div class="dialog-btns">
+      <button class="btn-cancel" onclick="closeEditComment()">キャンセル</button>
+      <button class="btn-save" onclick="saveEditComment()">保存</button>
     </div>
   </div>
 </div>
@@ -607,18 +626,20 @@ function confirmRecord() {
   pendingPhotoBase64 = null;
 }
 
-function renderAll() {
+function renderAll(keepView) {
   markers.forEach(m => map.removeLayer(m));
   markers = [];
   locations.forEach((loc, i) => {
-    const popup = `<b>#${i+1}</b>${loc.comment ? '<br>💬 ' + esc(loc.comment) : ''}<br>${esc(loc.label)}<br>精度: ±${esc(loc.accuracy)}m`;
+    const popup = `<b>#${i+1}</b>${loc.comment ? '<br>💬 ' + esc(loc.comment).replace(/\n/g, '<br>') : ''}<br>${esc(loc.label)}<br>精度: ±${esc(loc.accuracy)}m<br><button class="popup-edit" onclick="openEditComment(${loc.id})">✏ コメントを編集</button>`;
     const m = L.marker([loc.lat, loc.lng], { icon: smallIcon }).addTo(map).bindPopup(popup);
     markers.push(m);
   });
-  if (locations.length > 1) {
-    map.fitBounds(L.featureGroup(markers).getBounds().pad(0.2));
-  } else if (locations.length === 1) {
-    map.setView([locations[0].lat, locations[0].lng], 15);
+  if (!keepView) {
+    if (locations.length > 1) {
+      map.fitBounds(L.featureGroup(markers).getBounds().pad(0.2));
+    } else if (locations.length === 1) {
+      map.setView([locations[0].lat, locations[0].lng], 15);
+    }
   }
   document.getElementById('countBadge').textContent = locations.length + '件';
   renderLog();
@@ -662,6 +683,36 @@ function viewPhoto(id) {
 
 function closePhotoViewer() {
   document.getElementById('photoViewer').classList.remove('show');
+}
+
+/* ---------- 地図のピンからコメントを編集 ---------- */
+let editingId = null;
+
+function openEditComment(id) {
+  const idx = locations.findIndex(l => l.id === id);
+  if (idx < 0) return;
+  editingId = id;
+  map.closePopup();
+  document.getElementById('editTitle').textContent = `✏ #${idx + 1} のコメントを編集`;
+  document.getElementById('editInput').value = locations[idx].comment || '';
+  document.getElementById('editDialog').classList.add('show');
+  setTimeout(() => document.getElementById('editInput').focus(), 100);
+}
+
+function closeEditComment() {
+  document.getElementById('editDialog').classList.remove('show');
+  editingId = null;
+}
+
+function saveEditComment() {
+  const idx = locations.findIndex(l => l.id === editingId);
+  if (idx < 0) { closeEditComment(); return; }
+  locations[idx].comment = document.getElementById('editInput').value.trim();
+  saveData();
+  renderAll(true);                 // 地図の表示位置は動かさない
+  markers[idx].openPopup();        // 更新後の吹き出しをもう一度開く
+  closeEditComment();
+  setStatus(`#${idx + 1} のコメントを更新しました ✓`, 'success');
 }
 
 function focusMarker(i) {
