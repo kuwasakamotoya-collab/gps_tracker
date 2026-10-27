@@ -104,7 +104,9 @@
   .btn-open { background: var(--surface2); color: var(--accent); border: 1px solid var(--accent) !important; }
   .btn-unload { background: var(--surface2); color: var(--accent); border: 1px solid var(--accent) !important; }
   .btn-unload:disabled { opacity: 0.4; cursor: not-allowed; }
-  .btn-del  { background: var(--surface2); color: var(--danger);  border: 1px solid var(--danger)  !important; grid-column: 1 / -1; }
+  .btn-del  { background: var(--surface2); color: var(--danger);  border: 1px solid var(--danger)  !important; }
+  .btn-dist { background: var(--surface2); color: #e879f9; border: 1px solid #e879f9 !important; }
+  .btn-dist:disabled { opacity: 0.4; cursor: not-allowed; }
 
   .section-title {
     font-size: 11px; font-weight: 700; letter-spacing: 0.08em;
@@ -262,6 +264,7 @@
     <button class="btn-csv" onclick="openSaveDialog()">⬇ CSV保存</button>
     <button class="btn-open" onclick="openCsvPicker()">⬆ CSVを開く</button>
     <button class="btn-route" id="btnClearRoute" onclick="clearRoute()" disabled>✕ 経路を消す</button>
+    <button class="btn-dist" id="btnClearDist" onclick="clearDistance()" disabled>✕ 距離を消す</button>
     <button class="btn-unload" id="btnClearLoaded" onclick="clearLoaded()" disabled>✕ 読込を消す</button>
     <button class="btn-del" onclick="clearAll()">🗑 全削除</button>
   </div>
@@ -775,13 +778,19 @@ function distBtnLabel(id) {
   return `📏 #${si + 1} までの距離`;
 }
 
+function updateDistBtn() {
+  document.getElementById('btnClearDist').disabled = !(distLayer || distStartId !== null);
+}
+
 function clearDistLine() {
   if (distLayer) { map.removeLayer(distLayer); distLayer = null; }
+  updateDistBtn();
 }
 
 function resetDistance() {
   distStartId = null;
   clearDistLine();
+  updateDistBtn();
 }
 
 function pickDistance(id) {
@@ -792,11 +801,13 @@ function pickDistance(id) {
   if (distStartId === null) {
     clearDistLine();
     distStartId = id;
+    updateDistBtn();
     setStatus(`📏 起点 #${idx + 1} を選びました。もう一つの地点のピンをタップして「#${idx + 1} までの距離」を押してください`, 'warn');
     return;
   }
   if (distStartId === id) {
     distStartId = null;
+    updateDistBtn();
     setStatus('起点を解除しました', '');
     return;
   }
@@ -817,13 +828,14 @@ function pickDistance(id) {
     .addTo(distLayer);
   map.fitBounds(L.latLngBounds(pts).pad(0.3));
   distStartId = null;
+  updateDistBtn();
   setStatus(`📏 #${si + 1} ⇔ #${idx + 1}：直線距離 ${fmtDist(d)}`, 'success');
 }
 
 function clearDistance() {
   resetDistance();
   map.closePopup();
-  setStatus('距離の線を消しました', '');
+  setStatus('距離の表示を消しました', '');
 }
 
 /* ---------- 地図のピンからコメントを編集 ---------- */
