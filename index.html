@@ -317,6 +317,20 @@
   </div>
 </div>
 
+<!-- CSV 読み込み方法の選択ダイアログ -->
+<div class="dialog-overlay" id="csvDialog">
+  <div class="dialog">
+    <h2>📂 CSVを読み込みました</h2>
+    <p class="warn-text" style="color: var(--text);" id="csvDialogText"></p>
+    <p class="hint">「記録データに取り込む」を選ぶと、このアプリの記録として追加されます（コメントの編集や距離の測定もできます）。写真はCSVに入っていないため、取り込まれません。同じ日時・同じ位置の記録は、重複として取り込みません。</p>
+    <div class="dialog-btns">
+      <button class="btn-retry" onclick="csvImport()">記録データに取り込む</button>
+      <button class="btn-force" onclick="csvViewOnly()">地図に表示だけ</button>
+      <button class="btn-cancel" style="grid-column: 1 / -1;" onclick="csvCancel()">キャンセル</button>
+    </div>
+  </div>
+</div>
+
 <!-- コメント編集ダイアログ -->
 <div class="dialog-overlay" id="editDialog">
   <div class="dialog">
@@ -1081,9 +1095,12 @@ function findCol(header, names) {
   });
 }
 
-function showCsvOnMap(text, fileName) {
+let pendingCsv = null;
+
+// CSV の文字列から、緯度・経度つきの点の一覧を作る
+function parsePoints(text) {
   const rows = parseCSV(text);
-  if (rows.length < 2) { setStatus('CSVにデータがありません', 'danger'); return; }
+  if (rows.length < 2) { setStatus('CSVにデータがありません', 'danger'); return null; }
 
   const header = rows[0];
   let iTime = findCol(header, ['日時', 'time', 'date']);
@@ -1108,9 +1125,101 @@ function showCsvOnMap(text, fileName) {
     });
   }
   if (points.length === 0) {
-    setStatus('緯度・経度の列が見つかりませんでした', 'danger'); return;
+    setStatus('緯度・経度の列が見つかりませんでした', 'danger'); return null;
   }
+  return points;
+}
 
+// CSV を読み込んだら、使い方を選ぶ画面を出す
+function showCsvOnMap(text, fileName) {
+  const points = parsePoints(text);
+  if (!points) return;
+  pendingCsv = { points, fileName };
+  document.getElementById('csvDialogText').textContent =
+    `${fileName}：${points.length}件の位置データを読み込みました。どうしますか？`;
+  document.getElementById('csvDialog').classList.add('show');
+}
+
+function closeCsvDialog() {
+  document.getElementById('csvDialog').classList.remove('show');
+}
+
+function csvCancel() {
+  closeCsvDialog();
+  pendingCsv = null;
+  setStatus('CSVの読み込みをやめました', '');
+}
+
+function csvViewOnly() {
+  closeCsvDialog();
+  if (!pendingCsv) return;
+  drawLoaded(pendingCsv.points, pendingCsv.fileName);
+  pendingCsv = null;
+}
+
+// 日時の文字列（例: 2026/10/26 11:44:30）を並べ替え用の数値にする
+function labelKey(label) {
+  const m = /(\d{4})\D(\d{1,2})\D(\d{1,2})\D+(\d{1,2}):(\d{2})(?::(\d{2}))?/.exec(label || '');
+  if (!m) return null;
+  return (+m[1]) * 1e10 + (+m[2]) * 1e8 + (+m[3]) * 1e6 + (+m[4]) * 1e4 + (+m[5]) * 100 + (+(m[6] || 0));
+}
+
+function sortLocationsByTime() {
+  const keys = locations.map(l => labelKey(l.label));
+  if (!keys.every(k => k !== null)) return;   // 日時が読めない記録があるときは並べ替えない
+  locations = locations
+    .map((l, i) => ({ l, k: keys[i], i }))
+    .sort((a, b) => a.k - b.k || a.i - b.i)
+    .map(x => x.l);
+}
+
+// CSV の点を、記録データとして追加する
+function csvImport() {
+  closeCsvDialog();
+  if (!pendingCsv) return;
+  const { points, fileName } = pendingCsv;
+  pendingCsv = null;
+
+  const keyOf = l => `${Number(l.lat).toFixed(6)}|${Number(l.lng).toFixed(6)}|${l.label}`;
+  const exist = new Set(locations.map(keyOf));
+  const usedIds = new Set(locations.map(l => l.id));
+  let idBase = Date.now();
+  let added = 0, skipped = 0;
+
+  points.forEach(p => {
+    const acc = parseInt(String(p.acc).replace(/[^\d]/g, ''), 10);
+    const entry = {
+      id: 0, lat: p.lat, lng: p.lng,
+      accuracy: isFinite(acc) ? acc : 0,
+      comment: String(p.note || '').trim(),
+      photo: null,
+      label: String(p.time || '').trim() || '日時不明'
+    };
+    const k = keyOf(entry);
+    if (exist.has(k)) { skipped++; return; }
+    exist.add(k);
+    while (usedIds.has(idBase)) idBase++;
+    entry.id = idBase; usedIds.add(idBase);
+    locations.push(entry);
+    added++;
+  });
+
+  if (added === 0) {
+    setStatus(`📥 ${fileName}：すべて取り込み済みでした（${skipped}件）`, 'warn');
+    return;
+  }
+  sortLocationsByTime();
+  saveData();
+  clearRoute();
+  resetDistance();
+  clearLoaded(true);
+  renderAll();
+  setStatus(`📥 ${fileName}：${added}件を記録データに取り込みました`
+    + (skipped ? `（重複${skipped}件は除く）` : ''), 'success');
+}
+
+// CSV の点を、地図に表示するだけ（記録データには加えない）
+function drawLoaded(points, fileName) {
   clearLoaded(true);
   loadedLayer = L.layerGroup().addTo(map);
 
