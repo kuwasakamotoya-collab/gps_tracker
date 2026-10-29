@@ -104,9 +104,22 @@
   .btn-open { background: var(--surface2); color: var(--accent); border: 1px solid var(--accent) !important; }
   .btn-unload { background: var(--surface2); color: var(--accent); border: 1px solid var(--accent) !important; }
   .btn-unload:disabled { opacity: 0.4; cursor: not-allowed; }
-  .btn-del  { background: var(--surface2); color: var(--danger);  border: 1px solid var(--danger)  !important; }
+  .btn-del  { background: var(--surface2); color: var(--danger);  border: 1px solid var(--danger)  !important; grid-column: 1 / -1; }
   .btn-dist { background: var(--surface2); color: #e879f9; border: 1px solid #e879f9 !important; }
   .btn-dist:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-area { background: var(--surface2); color: #38d9a9; border: 1px solid #38d9a9 !important; }
+  .btn-area:disabled { opacity: 0.4; cursor: not-allowed; }
+  .area-pin {
+    background: #38d9a9; color: #0f1117; border: 2px solid #fff; border-radius: 50%;
+    width: 18px; height: 18px; line-height: 14px; text-align: center;
+    font-size: 10px; font-weight: 700; box-shadow: 0 1px 3px rgba(0,0,0,0.5);
+  }
+  .area-tip {
+    background: #1a1d27; color: #fff; border: 1px solid #38d9a9;
+    font-size: 13px; font-weight: 700; padding: 4px 8px; border-radius: 8px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.5);
+  }
+  .area-tip::before { display: none; }
 
   .section-title {
     font-size: 11px; font-weight: 700; letter-spacing: 0.08em;
@@ -265,6 +278,7 @@
     <button class="btn-open" onclick="openCsvPicker()">⬆ CSVを開く</button>
     <button class="btn-route" id="btnClearRoute" onclick="clearRoute()" disabled>✕ 経路を消す</button>
     <button class="btn-dist" id="btnClearDist" onclick="clearDistance()" disabled>✕ 距離を消す</button>
+    <button class="btn-area" id="btnClearArea" onclick="clearArea()" disabled>✕ 面積を消す</button>
     <button class="btn-unload" id="btnClearLoaded" onclick="clearLoaded()" disabled>✕ 読込を消す</button>
     <button class="btn-del" onclick="clearAll()">🗑 全削除</button>
   </div>
@@ -767,7 +781,8 @@ function popupHtml(loc) {
   return `<b>#${idx + 1}</b>${loc.comment ? '<br>💬 ' + esc(loc.comment).replace(/\n/g, '<br>') : ''}`
     + `<br>${esc(loc.label)}<br>緯度: ${loc.lat.toFixed(5)}<br>経度: ${loc.lng.toFixed(5)}<br>精度: ±${esc(loc.accuracy)}m<br>`
     + `<button class="popup-edit" onclick="openEditComment(${loc.id})">✏ コメントを編集</button><br>`
-    + `<button class="popup-edit" style="background:#e879f9;color:#111" onclick="pickDistance(${loc.id})">${distBtnLabel(loc.id)}</button>`;
+    + `<button class="popup-edit" style="background:#e879f9;color:#111" onclick="pickDistance(${loc.id})">${distBtnLabel(loc.id)}</button><br>`
+    + `<button class="popup-edit" style="background:#38d9a9;color:#111" onclick="pickArea(${loc.id})">${areaBtnLabel(loc.id)}</button>`;
 }
 
 /* ---------- 2地点の距離 ---------- */
@@ -850,6 +865,142 @@ function clearDistance() {
   resetDistance();
   map.closePopup();
   setStatus('距離の表示を消しました', '');
+}
+
+/* ---------- 面積と周囲の長さ ---------- */
+let areaIds = [], areaLayer = null;
+
+function fmtNum(v, digits) {
+  return v.toLocaleString('ja-JP', { maximumFractionDigits: digits });
+}
+
+// 緯度・経度を、平らな地図上の座標（メートル）に直す（数km以内の範囲なら十分な精度）
+function toXY(pts) {
+  const R = 6371008.8, rad = Math.PI / 180;
+  const lat0 = pts.reduce((a, p) => a + p.lat, 0) / pts.length;
+  const lng0 = pts.reduce((a, p) => a + p.lng, 0) / pts.length;
+  const k = Math.cos(lat0 * rad);
+  return pts.map(p => ({ x: (p.lng - lng0) * rad * R * k, y: (p.lat - lat0) * rad * R }));
+}
+
+function polygonArea(xy) {
+  let a = 0;
+  for (let i = 0; i < xy.length; i++) {
+    const j = (i + 1) % xy.length;
+    a += xy[i].x * xy[j].y - xy[j].x * xy[i].y;
+  }
+  return Math.abs(a) / 2;
+}
+
+function polygonPerimeter(pts) {
+  let d = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const j = (i + 1) % pts.length;
+    d += haversine(pts[i].lat, pts[i].lng, pts[j].lat, pts[j].lng);
+  }
+  return d;
+}
+
+function segCross(a, b, c, d) {
+  const cr = (o, p, q) => (p.x - o.x) * (q.y - o.y) - (p.y - o.y) * (q.x - o.x);
+  return cr(a, b, c) * cr(a, b, d) < 0 && cr(c, d, a) * cr(c, d, b) < 0;
+}
+
+function isSelfIntersecting(xy) {
+  const n = xy.length;
+  if (n < 4) return false;
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      if (j === i + 1 || (i === 0 && j === n - 1)) continue;   // 隣り合う辺は除く
+      if (segCross(xy[i], xy[(i + 1) % n], xy[j], xy[(j + 1) % n])) return true;
+    }
+  }
+  return false;
+}
+
+function areaText(m2) {
+  return `${fmtNum(m2, 1)} ㎡（${fmtNum(m2 / 100, 2)} アール／${fmtNum(m2 / 10000, 4)} ha／約${fmtNum(m2 / 3.305785, 0)} 坪／約${fmtNum(m2 / 991.7355, 2)} 反）`;
+}
+
+function areaBtnLabel(id) {
+  return areaIds.includes(id) ? '📐 面積の点から外す' : '📐 面積の点に加える';
+}
+
+function updateAreaBtn() {
+  document.getElementById('btnClearArea').disabled = areaIds.length === 0;
+}
+
+function removeAreaLayer() {
+  if (areaLayer) { map.removeLayer(areaLayer); areaLayer = null; }
+}
+
+function resetArea() {
+  areaIds = [];
+  removeAreaLayer();
+  updateAreaBtn();
+}
+
+function clearArea() {
+  resetArea();
+  map.closePopup();
+  setStatus('面積の表示を消しました', '');
+}
+
+function pickArea(id) {
+  map.closePopup();
+  const at = areaIds.indexOf(id);
+  if (at >= 0) areaIds.splice(at, 1);
+  else areaIds.push(id);
+  updateArea();
+}
+
+function updateArea() {
+  removeAreaLayer();
+  updateAreaBtn();
+  const pts = areaIds.map(id => locations.find(l => l.id === id)).filter(Boolean);
+  if (pts.length === 0) { setStatus('面積の点をすべて外しました', ''); return; }
+
+  areaLayer = L.layerGroup().addTo(map);
+  pts.forEach((p, i) => {
+    L.marker([p.lat, p.lng], {
+      icon: L.divIcon({ className: '', iconSize: [18, 18], iconAnchor: [9, 9],
+        html: `<div class="area-pin">${i + 1}</div>` }),
+      interactive: false, keyboard: false, zIndexOffset: 500
+    }).addTo(areaLayer);
+  });
+
+  if (pts.length < 3) {
+    if (pts.length === 2) {
+      L.polyline(pts.map(p => [p.lat, p.lng]), { color: '#38d9a9', weight: 3, dashArray: '6,8' }).addTo(areaLayer);
+    }
+    setStatus(`📐 ${pts.length}点を選びました。面積を出すには、境界に沿った順に、あと${3 - pts.length}点以上を選んでください`, 'warn');
+    return;
+  }
+
+  const latlngs = pts.map(p => [p.lat, p.lng]);
+  const xy = toXY(pts);
+  const area = polygonArea(xy);
+  const per = polygonPerimeter(pts);
+  const crossing = isSelfIntersecting(xy);
+
+  const poly = L.polygon(latlngs, {
+    color: crossing ? '#f06060' : '#38d9a9', weight: 3, fillOpacity: 0.25
+  }).addTo(areaLayer);
+  poly.bindPopup(`<b>📐 ${pts.length}点で囲んだ範囲</b><br>`
+    + (crossing ? '線が交差しているため、面積を計算できません' : `面積: ${areaText(area)}`)
+    + `<br>周囲: ${fmtDist(per)}<br>`
+    + `<button class="popup-edit" onclick="clearArea()">面積の表示を消す</button>`);
+  L.tooltip({ permanent: true, direction: 'center', className: 'area-tip' })
+    .setLatLng(poly.getBounds().getCenter())
+    .setContent(crossing ? '⚠ 交差' : `${fmtNum(area, 0)} ㎡`)
+    .addTo(areaLayer);
+  if (!map.getBounds().contains(poly.getBounds())) map.fitBounds(poly.getBounds().pad(0.3));
+
+  if (crossing) {
+    setStatus(`⚠ 線が交差しているため、面積を計算できません。点を、境界に沿った順（時計回りか反時計回り）に選び直してください｜周囲 ${fmtDist(per)}`, 'warn');
+  } else {
+    setStatus(`📐 ${pts.length}点：面積 ${areaText(area)}｜周囲 ${fmtDist(per)}`, 'success');
+  }
 }
 
 /* ---------- 地図のピンからコメントを編集 ---------- */
@@ -943,14 +1094,14 @@ function clearRoute() {
 function deleteEntry(id) {
   if (!confirm('この記録を削除しますか？')) return;
   locations = locations.filter(l => l.id !== id);
-  saveData(); clearRoute(); resetDistance(); renderAll();
+  saveData(); clearRoute(); resetDistance(); resetArea(); renderAll();
   setStatus('1件削除しました', '');
 }
 
 function clearAll() {
   if (locations.length === 0) return;
   if (!confirm(locations.length + '件すべて削除しますか？')) return;
-  locations = []; saveData(); clearRoute(); resetDistance(); renderAll();
+  locations = []; saveData(); clearRoute(); resetDistance(); resetArea(); renderAll();
   setStatus('全データを削除しました', '');
 }
 
@@ -1212,6 +1363,7 @@ function csvImport() {
   saveData();
   clearRoute();
   resetDistance();
+  resetArea();
   clearLoaded(true);
   renderAll();
   setStatus(`📥 ${fileName}：${added}件を記録データに取り込みました`
