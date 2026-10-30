@@ -158,6 +158,8 @@
   .btn-ow { background: #38d9a9; color: #0f1117; grid-column: 1 / -1; }
   .file-label { grid-column: 1 / -1; font-size: 12px; color: var(--text2); text-align: center; margin-top: -2px; word-break: break-all; }
 
+  .btn-price { grid-column: 1 / -1; background: var(--surface2); color: #fbbf24; border: 1px solid #fbbf24 !important; }
+
   .btn-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
   .btn-row button {
     padding: 13px 8px; border-radius: var(--radius); border: none;
@@ -367,6 +369,7 @@
     <button class="btn-record" id="btnRecord" onclick="startRecord()">▶ 現在地を記録する</button>
     <button class="btn-mdist" id="btnMeasureDist" onclick="startMeasure('dist')">📏 距離を表示</button>
     <button class="btn-marea" id="btnMeasureArea" onclick="startMeasure('area')">📐 面積を表示</button>
+    <button class="btn-price" id="btnPrice" onclick="openPriceDialog()">💴 坪単価：未設定</button>
     <button class="btn-csv" onclick="openSaveDialog()">⬇ CSV保存</button>
     <button class="btn-open" onclick="openCsvPicker()">⬆ CSVを開く</button>
     <button class="btn-ow" id="btnOverwrite" onclick="quickSave()">💾 上書き保存</button>
@@ -455,6 +458,19 @@
   <div class="guide-btns">
     <button onclick="stopGuide()">終了</button>
     <button id="guideVibBtn" onclick="toggleVibrate()">📳 振動：入</button>
+  </div>
+</div>
+
+<!-- 坪単価の入力ダイアログ -->
+<div class="dialog-overlay" id="priceDialog">
+  <div class="dialog">
+    <h2>💴 坪単価を設定</h2>
+    <input type="text" id="priceInput" inputmode="numeric" placeholder="例: 50000（円／坪）" autocomplete="off"/>
+    <p class="hint" id="priceHint">土地の1坪あたりの値段（円）を入力します。面積を表示したときに、坪数にかけた金額も表示します。空にして保存すると、金額を表示しません。</p>
+    <div class="dialog-btns">
+      <button class="btn-cancel" onclick="closePriceDialog()">キャンセル</button>
+      <button class="btn-save" onclick="savePrice()">保存</button>
+    </div>
   </div>
 </div>
 
@@ -1447,19 +1463,94 @@ function drawMeasure() {
   if (!active) {
     poly.bindPopup(`<b>📐 ${n}点で囲んだ範囲</b><br>`
       + (crossing ? '線が交差しているため、面積を計算できません' : `面積: ${areaText(area)}`)
-      + `<br>周囲: ${fmtDist(per)}` + wipeBtn);
+      + `<br>周囲: ${fmtDist(per)}` + (crossing ? '' : priceHtml(area)) + wipeBtn);
   }
   L.tooltip({ permanent: true, direction: 'center', className: 'meas-area' })
     .setLatLng(poly.getBounds().getCenter())
-    .setContent(crossing ? '⚠ 交差' : `${fmtNum(area, 0)} ㎡`).addTo(measureLayer);
+    .setContent(crossing ? '⚠ 交差' : `${fmtNum(area, 0)} ㎡${priceTip(area)}`).addTo(measureLayer);
   if (active) {
     body.innerHTML = crossing
       ? '⚠ 線が交差しています。点を、境界に沿った順（時計回りか反時計回り）にタップし直してください<br>周囲：' + fmtDist(per)
-      : `<b>面積：${areaText(area)}</b><br>周囲：${fmtDist(per)}`;
+      : `<b>面積：${areaText(area)}</b><br>周囲：${fmtDist(per)}${priceHtml(area)}`;
   }
   setStatus(crossing
     ? '⚠ 線が交差しているため、面積を計算できません。点を、境界に沿った順に指定し直してください'
-    : `📐 ${n}点：面積 ${areaText(area)}｜周囲 ${fmtDist(per)}`, crossing ? 'warn' : 'success');
+    : `📐 ${n}点：面積 ${areaText(area)}｜周囲 ${fmtDist(per)}${priceInline(area)}`, crossing ? 'warn' : 'success');
+}
+
+/* ---------- 坪単価と金額 ---------- */
+const PRICE_KEY = 'gps_tracker_tsubo_price';
+const TSUBO_M2 = 3.305785;     // 1坪 ＝ 約3.305785 ㎡
+let tsuboPrice = null;         // 円／坪（未設定のときは null）
+try {
+  const v = parseInt(localStorage.getItem(PRICE_KEY), 10);
+  if (isFinite(v) && v > 0) tsuboPrice = v;
+} catch (e) {}
+
+function priceYen(m2) {
+  return tsuboPrice ? (m2 / TSUBO_M2) * tsuboPrice : null;
+}
+
+// 例: 195,952,000 円（約1.96億円）
+function yenText(v) {
+  const exact = `${fmtNum(Math.round(v), 0)} 円`;
+  if (v >= 1e8) return `${exact}（約${fmtNum(v / 1e8, 2)}億円）`;
+  if (v >= 1e4) return `${exact}（約${fmtNum(Math.round(v / 1e4), 0)}万円）`;
+  return exact;
+}
+
+function yenShort(v) {
+  if (v >= 1e8) return `約${fmtNum(v / 1e8, 2)}億円`;
+  if (v >= 1e4) return `約${fmtNum(Math.round(v / 1e4), 0)}万円`;
+  return `${fmtNum(Math.round(v), 0)}円`;
+}
+
+// 面積の表示に足す文（坪単価が未設定のときは空）
+function priceHtml(m2) {
+  const v = priceYen(m2);
+  return v === null ? '' : `<br>金額：${yenText(v)}<br><span style="font-size:11px;opacity:.8">坪単価 ${fmtNum(tsuboPrice, 0)} 円で計算</span>`;
+}
+function priceInline(m2) {
+  const v = priceYen(m2);
+  return v === null ? '' : `｜金額 ${yenText(v)}`;
+}
+function priceTip(m2) {
+  const v = priceYen(m2);
+  return v === null ? '' : `<br>${yenShort(v)}`;
+}
+
+function updatePriceBtn() {
+  document.getElementById('btnPrice').textContent =
+    tsuboPrice ? `💴 坪単価：${fmtNum(tsuboPrice, 0)} 円` : '💴 坪単価：未設定';
+}
+
+function openPriceDialog() {
+  document.getElementById('priceInput').value = tsuboPrice ? String(tsuboPrice) : '';
+  document.getElementById('priceDialog').classList.add('show');
+  setTimeout(() => document.getElementById('priceInput').focus(), 100);
+}
+
+function closePriceDialog() {
+  document.getElementById('priceDialog').classList.remove('show');
+}
+
+function savePrice() {
+  // 全角数字・カンマ・「円」などが入っていても、数字だけを取り出す
+  const raw = document.getElementById('priceInput').value
+    .replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
+    .replace(/[^\d]/g, '');
+  const v = raw ? parseInt(raw, 10) : null;
+  tsuboPrice = v && v > 0 ? v : null;
+  try {
+    if (tsuboPrice) localStorage.setItem(PRICE_KEY, String(tsuboPrice));
+    else localStorage.removeItem(PRICE_KEY);
+  } catch (e) {}
+  closePriceDialog();
+  updatePriceBtn();
+  setStatus(tsuboPrice ? `坪単価を ${fmtNum(tsuboPrice, 0)} 円に設定しました` : '坪単価の設定を消しました', 'success');
+  // 表示中の面積に、金額を反映する（面積の表示があるときは、その結果をステータスに出す）
+  if (measureKind === 'area' && measurePts.length >= 3) drawMeasure();
+  if (areaIds.length >= 3) updateArea();
 }
 
 /* ---------- 面積と周囲の長さ ---------- */
@@ -1583,18 +1674,18 @@ function updateArea() {
   }).addTo(areaLayer);
   poly.bindPopup(`<b>📐 ${pts.length}点で囲んだ範囲</b><br>`
     + (crossing ? '線が交差しているため、面積を計算できません' : `面積: ${areaText(area)}`)
-    + `<br>周囲: ${fmtDist(per)}<br>`
+    + `<br>周囲: ${fmtDist(per)}` + (crossing ? '' : priceHtml(area)) + `<br>`
     + `<button class="popup-edit" onclick="clearArea()">面積の表示を消す</button>`);
   L.tooltip({ permanent: true, direction: 'center', className: 'area-tip' })
     .setLatLng(poly.getBounds().getCenter())
-    .setContent(crossing ? '⚠ 交差' : `${fmtNum(area, 0)} ㎡`)
+    .setContent(crossing ? '⚠ 交差' : `${fmtNum(area, 0)} ㎡${priceTip(area)}`)
     .addTo(areaLayer);
   if (!map.getBounds().contains(poly.getBounds())) map.fitBounds(poly.getBounds().pad(0.3));
 
   if (crossing) {
     setStatus(`⚠ 線が交差しているため、面積を計算できません。点を、境界に沿った順（時計回りか反時計回り）に選び直してください｜周囲 ${fmtDist(per)}`, 'warn');
   } else {
-    setStatus(`📐 ${pts.length}点：面積 ${areaText(area)}｜周囲 ${fmtDist(per)}`, 'success');
+    setStatus(`📐 ${pts.length}点：面積 ${areaText(area)}｜周囲 ${fmtDist(per)}${priceInline(area)}`, 'success');
   }
 }
 
@@ -2099,6 +2190,7 @@ function clearLoaded(silent) {
 
 initMap();
 loadData();
+updatePriceBtn();
 if (window.AndroidBridge && typeof window.AndroidBridge.getCsvName === 'function') syncCsvNameFromApp();
 else setCurrentCsv(currentCsvName);
 </script>
