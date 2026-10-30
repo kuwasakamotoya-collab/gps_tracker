@@ -109,6 +109,52 @@
     background: var(--surface2); color: var(--warn); font-size: 13px; font-weight: 700; cursor: pointer;
   }
 
+  /* 距離・面積を、地図をタップして測る */
+  .btn-mdist { background: var(--surface2); color: #e879f9; border: 1px solid #e879f9 !important; }
+  .btn-marea { background: var(--surface2); color: #38d9a9; border: 1px solid #38d9a9 !important; }
+  .btn-mdist.on { background: #e879f9; color: #111; }
+  .btn-marea.on { background: #38d9a9; color: #111; }
+  #measurePanel {
+    display: none; position: fixed; left: 10px; right: 10px; bottom: 10px;
+    z-index: 1610; max-width: 700px; margin: 0 auto;
+    background: var(--surface); border: 2px solid #e879f9; border-radius: 16px;
+    padding: 10px 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.6);
+  }
+  #measurePanel.show { display: block; }
+  #measurePanel.area { border-color: #38d9a9; }
+  body.measuring-ui { padding-bottom: 210px; }
+  body.guiding #measurePanel { bottom: 150px; }
+  .measure-title { font-size: 13px; font-weight: 700; margin-bottom: 4px; }
+  .measure-body { font-size: 13px; line-height: 1.55; max-height: 84px; overflow-y: auto; }
+  .measure-btns { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 8px; }
+  .measure-btns button {
+    padding: 9px 4px; border-radius: 10px; border: 1px solid var(--border);
+    background: var(--surface2); color: var(--text); font-size: 13px; font-weight: 700; cursor: pointer;
+  }
+  .meas-pin {
+    border: 2px solid #fff; border-radius: 50%; width: 18px; height: 18px; line-height: 14px;
+    text-align: center; font-size: 10px; font-weight: 700; color: #0f1117;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.5);
+  }
+  .meas-pin.dist { background: #e879f9; }
+  .meas-pin.area { background: #38d9a9; }
+  .meas-tip {
+    background: #1a1d27; color: #fff; border: 1px solid #e879f9;
+    font-size: 11px; font-weight: 700; padding: 2px 6px; border-radius: 6px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.5);
+  }
+  .meas-tip::before { display: none; }
+  .meas-total {
+    background: #e879f9; color: #111; border: 2px solid #fff;
+    font-size: 13px; font-weight: 700; padding: 3px 8px; border-radius: 8px;
+  }
+  .meas-total::before { display: none; }
+  .meas-area {
+    background: #1a1d27; color: #fff; border: 1px solid #38d9a9;
+    font-size: 13px; font-weight: 700; padding: 4px 8px; border-radius: 8px;
+  }
+  .meas-area::before { display: none; }
+
   .btn-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
   .btn-row button {
     padding: 13px 8px; border-radius: var(--radius); border: none;
@@ -316,6 +362,8 @@
   <div id="map"></div>
   <div class="btn-row">
     <button class="btn-record" id="btnRecord" onclick="startRecord()">▶ 現在地を記録する</button>
+    <button class="btn-mdist" id="btnMeasureDist" onclick="startMeasure('dist')">📏 距離を表示</button>
+    <button class="btn-marea" id="btnMeasureArea" onclick="startMeasure('area')">📐 面積を表示</button>
     <button class="btn-csv" onclick="openSaveDialog()">⬇ CSV保存</button>
     <button class="btn-open" onclick="openCsvPicker()">⬆ CSVを開く</button>
     <button class="btn-route" id="btnClearRoute" onclick="clearRoute()" disabled>✕ 経路を消す</button>
@@ -371,6 +419,17 @@
       <button class="btn-cancel" onclick="closeSaveDialog()">キャンセル</button>
       <button class="btn-save" onclick="confirmSave()">保存する</button>
     </div>
+  </div>
+</div>
+
+<!-- 距離・面積の計測パネル -->
+<div id="measurePanel">
+  <div class="measure-title" id="measureTitle"></div>
+  <div class="measure-body" id="measureBody"></div>
+  <div class="measure-btns">
+    <button onclick="measureUndo()">↩ 1点戻す</button>
+    <button onclick="measureClear()">クリア</button>
+    <button onclick="stopMeasure()">終了</button>
   </div>
 </div>
 
@@ -525,7 +584,9 @@ const nowIcon = L.icon({
 });
 let nowMarker = null, lastPopupClose = 0, locatingNow = false;
 
-function onMapClick() {
+function onMapClick(e) {
+  // 距離・面積の計測中は、タップした位置を点として追加する
+  if (measureMode) { measureTap(e.latlng); return; }
   // 吹き出しを閉じるためのタップ、測定中、取得中は何もしない
   if (Date.now() - lastPopupClose < 400) return;
   if (measuring || locatingNow) return;
@@ -812,7 +873,7 @@ function renderAll(keepView) {
   markers.forEach(m => map.removeLayer(m));
   markers = [];
   locations.forEach((loc, i) => {
-    const m = L.marker([loc.lat, loc.lng], { icon: smallIcon }).addTo(map).bindPopup(() => popupHtml(loc), { maxWidth: 300, minWidth: 240 });
+    const m = L.marker([loc.lat, loc.lng], { icon: smallIcon, interactive: !measureMode }).addTo(map).bindPopup(() => popupHtml(loc), { maxWidth: 300, minWidth: 240 });
     markers.push(m);
   });
   if (!keepView) {
@@ -1210,6 +1271,185 @@ function updateCourse() {
   const bounds = L.latLngBounds(path);
   if (!map.getBounds().contains(bounds)) map.fitBounds(bounds.pad(0.3));
   setStatus(`🛤 ${n}点・${segs.length}区間：合計 ${fmtDist(total)}${courseClosed ? '（周回）' : ''}｜徒歩 約${Math.max(1, Math.round(total / 80))}分`, 'success');
+}
+
+/* ---------- 地図をタップして、距離・面積を測る ---------- */
+let measureMode = null;    // 'dist' | 'area' | null（計測中）
+let measureKind = null;    // 画面に表示している結果の種類
+let measurePts = [];       // [{lat, lng}]
+let measureLayer = null;
+
+function setMeasureButtons() {
+  const d = document.getElementById('btnMeasureDist');
+  const a = document.getElementById('btnMeasureArea');
+  d.classList.toggle('on', measureMode === 'dist');
+  a.classList.toggle('on', measureMode === 'area');
+  d.textContent = measureMode === 'dist' ? '■ 距離：終了' : '📏 距離を表示';
+  a.textContent = measureMode === 'area' ? '■ 面積：終了' : '📐 面積を表示';
+}
+
+function startMeasure(mode) {
+  if (measureMode === mode) { stopMeasure(); return; }   // 同じボタンをもう一度押すと終了
+  wipeMeasure();
+  map.closePopup();
+  measureMode = mode;
+  measureKind = mode;
+  setMeasureButtons();
+  const panel = document.getElementById('measurePanel');
+  panel.classList.add('show');
+  panel.classList.toggle('area', mode === 'area');
+  document.body.classList.add('measuring-ui');
+  renderAll(true);          // 計測中は、記録ピンをタップしても、その位置が点になる
+  drawMeasure();
+}
+
+function stopMeasure() {
+  if (!measureMode) return;
+  measureMode = null;
+  setMeasureButtons();
+  document.getElementById('measurePanel').classList.remove('show');
+  document.body.classList.remove('measuring-ui');
+  renderAll(true);
+  const enough = measureKind === 'dist' ? measurePts.length >= 2 : measurePts.length >= 3;
+  if (enough) drawMeasure();      // 結果は残す（線や範囲をタップすると「計測を消す」）
+  else { wipeMeasure(); setStatus('計測を終了しました', ''); }
+}
+
+function wipeMeasure() {
+  measurePts = [];
+  measureKind = null;
+  if (measureLayer) { map.removeLayer(measureLayer); measureLayer = null; }
+}
+
+function measureWipeAll() {
+  wipeMeasure();
+  map.closePopup();
+  setStatus('計測の表示を消しました', '');
+}
+
+function measureUndo() {
+  if (!measureMode || measurePts.length === 0) return;
+  measurePts.pop();
+  drawMeasure();
+}
+
+function measureClear() {
+  if (!measureMode) return;
+  measurePts = [];
+  drawMeasure();
+}
+
+// タップした位置を点にする（記録ピンの近くをタップしたときは、そのピンの位置に合わせる）
+function measureTap(latlng) {
+  const pt = map.latLngToContainerPoint(latlng);
+  let best = null, bestD = 24;
+  locations.forEach(l => {
+    const q = map.latLngToContainerPoint([l.lat, l.lng]);
+    const d = Math.min(pt.distanceTo(q), pt.distanceTo(L.point(q.x, q.y - 10)));
+    if (d < bestD) { bestD = d; best = l; }
+  });
+  const p = best ? { lat: best.lat, lng: best.lng } : { lat: latlng.lat, lng: latlng.lng };
+  const last = measurePts[measurePts.length - 1];
+  if (last && last.lat === p.lat && last.lng === p.lng) return;   // 同じ点の連続タップは無視
+  measurePts.push(p);
+  drawMeasure();
+}
+
+function drawMeasure() {
+  if (measureLayer) { map.removeLayer(measureLayer); measureLayer = null; }
+  const kind = measureKind;
+  const n = measurePts.length;
+  const active = measureMode !== null;
+  const color = kind === 'dist' ? '#e879f9' : '#38d9a9';
+  const title = document.getElementById('measureTitle');
+  const body = document.getElementById('measureBody');
+
+  if (active) {
+    title.textContent = kind === 'dist' ? '📏 距離：地図をタップして、点を指定' : '📐 面積：境界に沿って、地図の点をタップ';
+    body.textContent = n === 0 ? '1点目をタップしてください' : '';
+  }
+  if (!kind || n === 0) {
+    if (active) setStatus(kind === 'dist' ? '📏 距離：地図をタップして、1点目を指定してください' : '📐 面積：地図をタップして、境界に沿って点を指定してください', 'warn');
+    return;
+  }
+
+  measureLayer = L.layerGroup().addTo(map);
+  measurePts.forEach((p, i) => {
+    L.marker([p.lat, p.lng], {
+      icon: L.divIcon({ className: '', iconSize: [18, 18], iconAnchor: [9, 9],
+        html: `<div class="meas-pin ${kind}">${i + 1}</div>` }),
+      interactive: false, keyboard: false, zIndexOffset: 600
+    }).addTo(measureLayer);
+  });
+  const latlngs = measurePts.map(p => [p.lat, p.lng]);
+  const wipeBtn = `<br><button class="popup-edit" onclick="measureWipeAll()">計測を消す</button>`;
+
+  if (kind === 'dist') {
+    const segs = [];
+    let total = 0;
+    for (let i = 0; i + 1 < n; i++) {
+      const d = haversine(measurePts[i].lat, measurePts[i].lng, measurePts[i + 1].lat, measurePts[i + 1].lng);
+      segs.push(d); total += d;
+    }
+    if (n >= 2) {
+      const line = L.polyline(latlngs, { color, weight: 4, opacity: 0.9, interactive: !active }).addTo(measureLayer);
+      if (!active) {
+        line.bindPopup(`<b>📏 ${n}点・${segs.length}区間</b><br>`
+          + segs.map((d, i) => `${i + 1} → ${i + 2}：${fmtDist(d)}`).join('<br>')
+          + `<br><b>合計：${fmtDist(total)}</b>` + wipeBtn);
+      }
+      segs.forEach((d, i) => {
+        L.tooltip({ permanent: true, direction: 'center', className: 'meas-tip' })
+          .setLatLng([(measurePts[i].lat + measurePts[i + 1].lat) / 2, (measurePts[i].lng + measurePts[i + 1].lng) / 2])
+          .setContent(fmtDist(d)).addTo(measureLayer);
+      });
+      const lastP = measurePts[n - 1];
+      L.tooltip({ permanent: true, direction: 'top', offset: [0, -12], className: 'meas-total' })
+        .setLatLng([lastP.lat, lastP.lng]).setContent(`合計 ${fmtDist(total)}`).addTo(measureLayer);
+    }
+    const summary = n >= 2
+      ? `${n}点・${segs.length}区間：合計 ${fmtDist(total)}（徒歩 約${Math.max(1, Math.round(total / 80))}分）`
+      : '1点目を指定しました。次の点をタップしてください';
+    if (active) {
+      body.innerHTML = (segs.map((d, i) => `${i + 1} → ${i + 2}：${fmtDist(d)}`).join('<br>')
+        + (n >= 2 ? `<br><b>合計：${fmtDist(total)}</b>（徒歩 約${Math.max(1, Math.round(total / 80))}分）` : ''))
+        || '次の点をタップしてください';
+      body.scrollTop = body.scrollHeight;
+    }
+    setStatus('📏 ' + summary, n >= 2 ? 'success' : 'warn');
+    return;
+  }
+
+  // 面積
+  if (n < 3) {
+    if (n === 2) L.polyline(latlngs, { color, weight: 3, dashArray: '6,8', interactive: false }).addTo(measureLayer);
+    if (active) body.textContent = `${n}点を指定しました。あと${3 - n}点以上タップすると、面積が出ます`;
+    setStatus(`📐 ${n}点を指定しました。面積を出すには、あと${3 - n}点以上タップしてください`, 'warn');
+    return;
+  }
+  const xy = toXY(measurePts);
+  const area = polygonArea(xy);
+  const per = polygonPerimeter(measurePts);
+  const crossing = isSelfIntersecting(xy);
+  const poly = L.polygon(latlngs, {
+    color: crossing ? '#f06060' : color, weight: 3, fillOpacity: 0.25, interactive: !active
+  }).addTo(measureLayer);
+  if (!active) {
+    poly.bindPopup(`<b>📐 ${n}点で囲んだ範囲</b><br>`
+      + (crossing ? '線が交差しているため、面積を計算できません' : `面積: ${areaText(area)}`)
+      + `<br>周囲: ${fmtDist(per)}` + wipeBtn);
+  }
+  L.tooltip({ permanent: true, direction: 'center', className: 'meas-area' })
+    .setLatLng(poly.getBounds().getCenter())
+    .setContent(crossing ? '⚠ 交差' : `${fmtNum(area, 0)} ㎡`).addTo(measureLayer);
+  if (active) {
+    body.innerHTML = crossing
+      ? '⚠ 線が交差しています。点を、境界に沿った順（時計回りか反時計回り）にタップし直してください<br>周囲：' + fmtDist(per)
+      : `<b>面積：${areaText(area)}</b><br>周囲：${fmtDist(per)}`;
+  }
+  setStatus(crossing
+    ? '⚠ 線が交差しているため、面積を計算できません。点を、境界に沿った順に指定し直してください'
+    : `📐 ${n}点：面積 ${areaText(area)}｜周囲 ${fmtDist(per)}`, crossing ? 'warn' : 'success');
 }
 
 /* ---------- 面積と周囲の長さ ---------- */
