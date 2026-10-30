@@ -155,6 +155,9 @@
   }
   .meas-area::before { display: none; }
 
+  .btn-ow { background: #38d9a9; color: #0f1117; grid-column: 1 / -1; }
+  .file-label { grid-column: 1 / -1; font-size: 12px; color: var(--text2); text-align: center; margin-top: -2px; word-break: break-all; }
+
   .btn-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
   .btn-row button {
     padding: 13px 8px; border-radius: var(--radius); border: none;
@@ -366,6 +369,8 @@
     <button class="btn-marea" id="btnMeasureArea" onclick="startMeasure('area')">📐 面積を表示</button>
     <button class="btn-csv" onclick="openSaveDialog()">⬇ CSV保存</button>
     <button class="btn-open" onclick="openCsvPicker()">⬆ CSVを開く</button>
+    <button class="btn-ow" id="btnOverwrite" onclick="quickSave()">💾 上書き保存</button>
+    <div class="file-label" id="fileLabel">📄 編集中のファイル：なし</div>
     <button class="btn-route" id="btnClearRoute" onclick="clearRoute()" disabled>✕ 経路を消す</button>
     <button class="btn-dist" id="btnClearDist" onclick="clearDistance()" disabled>✕ 距離を消す</button>
     <button class="btn-area" id="btnClearArea" onclick="clearArea()" disabled>✕ 面積を消す</button>
@@ -458,11 +463,12 @@
   <div class="dialog">
     <h2>📂 CSVを読み込みました</h2>
     <p class="warn-text" style="color: var(--text);" id="csvDialogText"></p>
-    <p class="hint">「記録データに取り込む」を選ぶと、このアプリの記録として追加されます（コメントの編集や距離の測定もできます）。写真はCSVに入っていないため、取り込まれません。同じ日時・同じ位置の記録は、重複として取り込みません。</p>
-    <div class="dialog-btns">
-      <button class="btn-retry" onclick="csvImport()">記録データに取り込む</button>
+    <p class="hint"><b>続きを記録する</b>：今の記録を、このファイルの内容に入れ替えます。そのあと現在位置を記録し、「上書き保存」で同じファイル名に保存できます（写真は、同じ日時・位置の記録があれば引き継ぎます）。<br><b>追加で取り込む</b>：今の記録に加えます（同じ日時・同じ位置は除きます）。<br>写真はCSVに入っていないため、CSVからは取り込まれません。</p>
+    <div class="dialog-btns" style="grid-template-columns: 1fr;">
+      <button class="btn-retry" onclick="csvContinue()">このファイルの続きを記録する</button>
+      <button class="btn-force" onclick="csvImport()">今の記録に追加で取り込む</button>
       <button class="btn-force" onclick="csvViewOnly()">地図に表示だけ</button>
-      <button class="btn-cancel" style="grid-column: 1 / -1;" onclick="csvCancel()">キャンセル</button>
+      <button class="btn-cancel" onclick="csvCancel()">キャンセル</button>
     </div>
   </div>
 </div>
@@ -1701,9 +1707,34 @@ function defaultFileName() {
     + '_' + pad2(d.getHours()) + pad2(d.getMinutes());
 }
 
+// いま編集しているCSVファイル名（「上書き保存」の保存先）
+const CSVNAME_KEY = 'gps_tracker_csvname';
+let currentCsvName = null;
+try { currentCsvName = localStorage.getItem(CSVNAME_KEY) || null; } catch (e) {}
+
+function setCurrentCsv(name) {
+  currentCsvName = name || null;
+  try {
+    if (currentCsvName) localStorage.setItem(CSVNAME_KEY, currentCsvName);
+    else localStorage.removeItem(CSVNAME_KEY);
+  } catch (e) {}
+  document.getElementById('fileLabel').textContent =
+    '📄 編集中のファイル：' + (currentCsvName || 'なし');
+}
+
+// アプリ側（Android）が覚えているファイル名に合わせる
+function syncCsvNameFromApp() {
+  if (window.AndroidBridge && typeof window.AndroidBridge.getCsvName === 'function') {
+    let n = '';
+    try { n = String(window.AndroidBridge.getCsvName() || ''); } catch (e) {}
+    setCurrentCsv(n || null);
+  }
+}
+
 function openSaveDialog() {
   if (locations.length === 0) { setStatus('保存するデータがありません', 'danger'); return; }
-  document.getElementById('fileNameInput').value = defaultFileName();
+  document.getElementById('fileNameInput').value =
+    currentCsvName ? currentCsvName.replace(/\.csv$/i, '') : defaultFileName();
   document.getElementById('saveDialog').classList.add('show');
   setTimeout(() => {
     const input = document.getElementById('fileNameInput');
@@ -1730,22 +1761,43 @@ function buildCSV() {
   return '\uFEFF' + [header, ...rows].join('\r\n');
 }
 
+// 名前を付けて保存（入力した名前で保存）
 function confirmSave() {
   const fileName = sanitizeFileName(document.getElementById('fileNameInput').value);
   closeSaveDialog();
-  saveCsvFile(fileName, buildCSV());
+  saveCsvFile(fileName, buildCSV(), false);
 }
 
-function saveCsvFile(fileName, csvText) {
+// 上書き保存（いま編集しているファイル名で保存）
+function quickSave() {
+  if (locations.length === 0) { setStatus('保存するデータがありません', 'danger'); return; }
+  if (!currentCsvName) { openSaveDialog(); return; }   // まだファイル名がないときは、名前を付けて保存
+  saveCsvFile(sanitizeFileName(currentCsvName), buildCSV(), true);
+}
+
+function saveCsvFile(fileName, csvText, overwrite) {
   // Androidアプリ（WebView）の場合：アプリ側の保存機能を使う
   if (window.AndroidBridge && typeof window.AndroidBridge.saveCsv === 'function') {
     let result = '';
-    try { result = String(window.AndroidBridge.saveCsv(fileName, csvText)); }
-    catch (e) { result = 'ERR:' + e; }
+    let note = '';
+    try {
+      if (overwrite && typeof window.AndroidBridge.overwriteCsv === 'function') {
+        result = String(window.AndroidBridge.overwriteCsv(fileName, csvText));
+        if (result === 'NOURI') {
+          // 元のファイルに書き込めないとき（開いたファイルでない、許可がない、など）
+          result = String(window.AndroidBridge.saveCsv(fileName, csvText));
+          note = '元のファイルに書き込めなかったため、新しいファイルとして保存しました。';
+        }
+      } else {
+        result = String(window.AndroidBridge.saveCsv(fileName, csvText));
+      }
+    } catch (e) { result = 'ERR:' + e; }
     if (result.indexOf('ERR:') === 0) {
       setStatus('保存に失敗しました：' + result.slice(4), 'danger');
     } else {
-      setStatus('保存しました ✓ ' + (result.indexOf('OK:') === 0 ? result.slice(3) : fileName), 'success');
+      syncCsvNameFromApp();
+      setStatus((note ? '⚠ ' + note : '') + '保存しました ✓ ' + (result.indexOf('OK:') === 0 ? result.slice(3) : fileName),
+                note ? 'warn' : 'success');
     }
     return;
   }
@@ -1754,7 +1806,7 @@ function saveCsvFile(fileName, csvText) {
     setStatus('アプリ側の保存機能が未設定です（アプリの更新が必要です）', 'danger');
     return;
   }
-  // パソコン・スマホのブラウザ：通常のダウンロード
+  // パソコン・スマホのブラウザ：通常のダウンロード（同じ名前のファイルがあると、ブラウザが番号を付けます）
   const blob = new Blob([csvText], { type: 'text/csv;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -1764,6 +1816,7 @@ function saveCsvFile(fileName, csvText) {
   a.click();
   document.body.removeChild(a);
   setTimeout(() => URL.revokeObjectURL(url), 5000);
+  setCurrentCsv(fileName);
   setStatus('ダウンロードしました ✓ ' + fileName, 'success');
 }
 
@@ -1895,6 +1948,55 @@ function csvViewOnly() {
   pendingCsv = null;
 }
 
+// このファイルの続きを記録する：今の記録を、CSVの内容に入れ替える
+function csvContinue() {
+  closeCsvDialog();
+  if (!pendingCsv) return;
+  const { points, fileName } = pendingCsv;
+  pendingCsv = null;
+
+  if (locations.length > 0 && !confirm(
+      `今の記録 ${locations.length}件は、このファイルの内容（${points.length}件）に入れ替わります。\n`
+      + '先にCSV保存をしていない記録は、消えます。よろしいですか？')) {
+    setStatus('CSVの読み込みをやめました', '');
+    return;
+  }
+
+  const keyOf = l => `${Number(l.lat).toFixed(6)}|${Number(l.lng).toFixed(6)}|${l.label}`;
+  const photoByKey = new Map();
+  locations.forEach(l => { if (l.photo) photoByKey.set(keyOf(l), l.photo); });   // 写真は引き継ぐ
+
+  let idBase = Date.now();
+  const entries = points.map(p => {
+    const acc = parseInt(String(p.acc).replace(/[^\d]/g, ''), 10);
+    const e = {
+      id: idBase++, lat: p.lat, lng: p.lng,
+      accuracy: isFinite(acc) ? acc : 0,
+      comment: String(p.note || '').trim(),
+      photo: null,
+      label: String(p.time || '').trim() || '日時不明'
+    };
+    e.photo = photoByKey.get(keyOf(e)) || null;
+    return e;
+  });
+
+  locations = entries;
+  sortLocationsByTime();
+  saveData();
+  clearRoute(); resetDistance(); resetArea(); resetCourse(); stopGuide(true);
+  if (measureMode) stopMeasure();
+  wipeMeasure();
+  clearLoaded(true);
+  renderAll();
+
+  if (/\.csv$/i.test(fileName)) {
+    setCurrentCsv(fileName);
+    setStatus(`📄 ${fileName}：${entries.length}件を読み込みました。現在位置を記録して、「上書き保存」で同じファイル名に保存できます`, 'success');
+  } else {
+    setStatus(`📄 ${fileName}：${entries.length}件を読み込みました（.csv ではないため、保存は「CSV保存」で名前を付けて行ってください）`, 'warn');
+  }
+}
+
 // 日時の文字列（例: 2026/10/26 11:44:30）を並べ替え用の数値にする
 function labelKey(label) {
   const m = /(\d{4})\D(\d{1,2})\D(\d{1,2})\D+(\d{1,2}):(\d{2})(?::(\d{2}))?/.exec(label || '');
@@ -1993,6 +2095,8 @@ function clearLoaded(silent) {
 
 initMap();
 loadData();
+if (window.AndroidBridge && typeof window.AndroidBridge.getCsvName === 'function') syncCsvNameFromApp();
+else setCurrentCsv(currentCsvName);
 </script>
 </body>
 </html>
