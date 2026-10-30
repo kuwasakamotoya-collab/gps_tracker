@@ -88,6 +88,27 @@
   }
   .dist-tip::before { display: none; }
 
+  /* 目印への案内パネル */
+  #guidePanel {
+    display: none; position: fixed; left: 10px; right: 10px; bottom: 10px;
+    z-index: 1600; max-width: 700px; margin: 0 auto;
+    background: var(--surface); border: 2px solid var(--warn); border-radius: 16px;
+    padding: 10px 12px; align-items: center; gap: 12px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.6);
+  }
+  #guidePanel.show { display: flex; }
+  body.guiding { padding-bottom: 140px; }
+  .guide-arrow { width: 58px; height: 58px; flex-shrink: 0; transition: transform 0.3s; }
+  .guide-info { flex: 1; min-width: 0; }
+  .guide-title { font-size: 12px; color: var(--text2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .guide-dist { font-size: 26px; font-weight: 700; color: var(--warn); line-height: 1.2; }
+  .guide-dir { font-size: 14px; font-weight: 700; }
+  .guide-sub { font-size: 11px; color: var(--text2); margin-top: 2px; }
+  #guidePanel button {
+    flex-shrink: 0; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--warn);
+    background: var(--surface2); color: var(--warn); font-size: 13px; font-weight: 700; cursor: pointer;
+  }
+
   .btn-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
   .btn-row button {
     padding: 13px 8px; border-radius: var(--radius); border: none;
@@ -329,6 +350,23 @@
       <button class="btn-save" onclick="confirmSave()">保存する</button>
     </div>
   </div>
+</div>
+
+<!-- 目印への案内パネル -->
+<div id="guidePanel">
+  <div class="guide-arrow" id="guideArrow">
+    <svg viewBox="0 0 100 100" width="58" height="58">
+      <circle cx="50" cy="50" r="46" fill="#22263a" stroke="#f5a623" stroke-width="4"/>
+      <path d="M50 12 L72 62 L50 50 L28 62 Z" fill="#f5a623"/>
+    </svg>
+  </div>
+  <div class="guide-info">
+    <div class="guide-title" id="guideTitle"></div>
+    <div class="guide-dist" id="guideDist">--</div>
+    <div class="guide-dir" id="guideDir"></div>
+    <div class="guide-sub" id="guideSub"></div>
+  </div>
+  <button onclick="stopGuide()">終了</button>
 </div>
 
 <!-- CSV 読み込み方法の選択ダイアログ -->
@@ -782,7 +820,8 @@ function popupHtml(loc) {
     + `<br>${esc(loc.label)}<br>緯度: ${loc.lat.toFixed(5)}<br>経度: ${loc.lng.toFixed(5)}<br>精度: ±${esc(loc.accuracy)}m<br>`
     + `<button class="popup-edit" onclick="openEditComment(${loc.id})">✏ コメントを編集</button><br>`
     + `<button class="popup-edit" style="background:#e879f9;color:#111" onclick="pickDistance(${loc.id})">${distBtnLabel(loc.id)}</button><br>`
-    + `<button class="popup-edit" style="background:#38d9a9;color:#111" onclick="pickArea(${loc.id})">${areaBtnLabel(loc.id)}</button>`;
+    + `<button class="popup-edit" style="background:#38d9a9;color:#111" onclick="pickArea(${loc.id})">${areaBtnLabel(loc.id)}</button><br>`
+    + `<button class="popup-edit" style="background:#f5a623;color:#111" onclick="pickGuide(${loc.id})">${guideBtnLabel(loc.id)}</button>`;
 }
 
 /* ---------- 2地点の距離 ---------- */
@@ -865,6 +904,120 @@ function clearDistance() {
   resetDistance();
   map.closePopup();
   setStatus('距離の表示を消しました', '');
+}
+
+/* ---------- 目印までの案内（方角と距離） ---------- */
+let guideId = null, guideWatch = null, guideLayer = null, guideMe = null, guideLine = null;
+let guideFirst = true, guideHeading = null, guideHeadingAt = 0;
+const DIR16 = ['北', '北北東', '北東', '東北東', '東', '東南東', '南東', '南南東',
+               '南', '南南西', '南西', '西南西', '西', '西北西', '北西', '北北西'];
+
+function bearingTo(lat1, lng1, lat2, lng2) {
+  const r = Math.PI / 180;
+  const y = Math.sin((lng2 - lng1) * r) * Math.cos(lat2 * r);
+  const x = Math.cos(lat1 * r) * Math.sin(lat2 * r)
+          - Math.sin(lat1 * r) * Math.cos(lat2 * r) * Math.cos((lng2 - lng1) * r);
+  return (Math.atan2(y, x) / r + 360) % 360;
+}
+
+function dirName(b) { return DIR16[Math.round(b / 22.5) % 16]; }
+
+function guideBtnLabel(id) {
+  return guideId === id ? '🧭 案内を終了' : '🧭 ここへ案内';
+}
+
+function pickGuide(id) {
+  map.closePopup();
+  if (guideId === id) { stopGuide(); return; }
+  startGuide(id);
+}
+
+function startGuide(id) {
+  const loc = locations.find(l => l.id === id);
+  if (!loc) return;
+  if (!navigator.geolocation) { setStatus('位置情報に対応していません', 'danger'); return; }
+  stopGuide(true);
+  guideId = id;
+  guideFirst = true;
+  guideHeading = null;
+  const idx = locations.indexOf(loc);
+  const name = `#${idx + 1}` + (loc.comment ? `「${loc.comment}」` : '');
+  document.getElementById('guideTitle').textContent = `🧭 ${name} へ案内中`;
+  document.getElementById('guideDist').textContent = '--';
+  document.getElementById('guideDir').textContent = '現在地を取得中…';
+  document.getElementById('guideSub').textContent = '';
+  document.getElementById('guideArrow').style.transform = 'rotate(0deg)';
+  document.getElementById('guidePanel').classList.add('show');
+  document.body.classList.add('guiding');
+
+  guideLayer = L.layerGroup().addTo(map);
+  L.circleMarker([loc.lat, loc.lng], { radius: 16, color: '#f5a623', weight: 3, fill: false })
+    .addTo(guideLayer);
+  guideWatch = navigator.geolocation.watchPosition(onGuideFix, onGuideError, {
+    enableHighAccuracy: true, maximumAge: 1000, timeout: 30000
+  });
+  setStatus(`🧭 ${name} への案内を始めました。現在地を取得しています…`, 'loading');
+}
+
+function onGuideError(err) {
+  if (err.code === 1) {
+    stopGuide(true);
+    setStatus('位置情報の許可が必要です', 'danger');
+  }
+}
+
+function onGuideFix(pos) {
+  const loc = locations.find(l => l.id === guideId);
+  if (!loc) { stopGuide(true); return; }
+  const { latitude: lat, longitude: lng, accuracy, heading, speed } = pos.coords;
+
+  const d = haversine(lat, lng, loc.lat, loc.lng);
+  const b = bearingTo(lat, lng, loc.lat, loc.lng);
+
+  // 進行方向：歩いている（秒速0.7m以上）ときだけ、GPSの向きを使う
+  const now = Date.now();
+  if (heading !== null && !isNaN(heading) && speed !== null && speed >= 0.7) {
+    guideHeading = heading; guideHeadingAt = now;
+  } else if (now - guideHeadingAt > 8000) {
+    guideHeading = null;
+  }
+  const rel = guideHeading !== null ? (b - guideHeading + 360) % 360 : b;
+  document.getElementById('guideArrow').style.transform = `rotate(${rel}deg)`;
+
+  const arrived = d <= 10;
+  document.getElementById('guideDist').textContent = arrived ? '🎯 到着' : fmtDist(d);
+  document.getElementById('guideDir').textContent = arrived
+    ? '目印の10m以内です' : `${dirName(b)}（${Math.round(b)}°）の方向`;
+  document.getElementById('guideSub').textContent =
+    `精度 ±${Math.round(accuracy)}m｜矢印の上＝${guideHeading !== null ? '進む向き' : '北'}`
+    + (!arrived && d >= 50 ? `｜徒歩 約${Math.max(1, Math.round(d / 80))}分` : '');
+
+  if (!guideMe) {
+    guideMe = L.circleMarker([lat, lng], {
+      radius: 9, fillColor: '#38d9a9', color: '#fff', weight: 2, fillOpacity: 0.9
+    }).addTo(guideLayer).bindPopup('📍 現在地');
+    guideLine = L.polyline([[lat, lng], [loc.lat, loc.lng]], {
+      color: '#f5a623', weight: 3, opacity: 0.9, dashArray: '8,8'
+    }).addTo(guideLayer);
+  } else {
+    guideMe.setLatLng([lat, lng]);
+    guideLine.setLatLngs([[lat, lng], [loc.lat, loc.lng]]);
+  }
+  if (guideFirst) {
+    guideFirst = false;
+    map.fitBounds(L.latLngBounds([[lat, lng], [loc.lat, loc.lng]]).pad(0.3), { maxZoom: 18 });
+  }
+  setStatus(arrived ? '🎯 目印に着きました' : `🧭 目印まで ${fmtDist(d)}（${dirName(b)}）`,
+            arrived ? 'success' : 'warn');
+}
+
+function stopGuide(silent) {
+  if (guideWatch !== null) { navigator.geolocation.clearWatch(guideWatch); guideWatch = null; }
+  if (guideLayer) { map.removeLayer(guideLayer); guideLayer = null; }
+  guideMe = null; guideLine = null; guideId = null;
+  document.getElementById('guidePanel').classList.remove('show');
+  document.body.classList.remove('guiding');
+  if (silent !== true) setStatus('案内を終了しました', '');
 }
 
 /* ---------- 面積と周囲の長さ ---------- */
@@ -1094,14 +1247,16 @@ function clearRoute() {
 function deleteEntry(id) {
   if (!confirm('この記録を削除しますか？')) return;
   locations = locations.filter(l => l.id !== id);
-  saveData(); clearRoute(); resetDistance(); resetArea(); renderAll();
+  saveData(); clearRoute(); resetDistance(); resetArea();
+  if (guideId !== null && !locations.some(l => l.id === guideId)) stopGuide(true);
+  renderAll();
   setStatus('1件削除しました', '');
 }
 
 function clearAll() {
   if (locations.length === 0) return;
   if (!confirm(locations.length + '件すべて削除しますか？')) return;
-  locations = []; saveData(); clearRoute(); resetDistance(); resetArea(); renderAll();
+  locations = []; saveData(); clearRoute(); resetDistance(); resetArea(); stopGuide(true); renderAll();
   setStatus('全データを削除しました', '');
 }
 
