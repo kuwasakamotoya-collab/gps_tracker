@@ -691,7 +691,7 @@ function setStatus(msg, type = '') {
 function startRecord() {
   // 測定中にもう一度押すと、測定を中止する
   if (measuring) {
-    stopMeasure();
+    stopGpsMeasure();
     resetRecordButton();
     setStatus('測定を中止しました', '');
     return;
@@ -724,7 +724,7 @@ function onFix(pos) {
 function onFixError(err) {
   // 許可がないときだけ即終了。それ以外は一時的な失敗として測定を続ける
   if (err.code === 1) {
-    stopMeasure();
+    stopGpsMeasure();
     resetRecordButton();
     setStatus('位置情報の許可が必要です', 'danger');
   }
@@ -742,7 +742,7 @@ function updateMeasureStatus() {
   setStatus(msg, 'loading');
 }
 
-function stopMeasure() {
+function stopGpsMeasure() {
   if (watchId !== null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
   if (measureTimer !== null) { clearInterval(measureTimer); measureTimer = null; }
   measuring = false;
@@ -756,7 +756,8 @@ function resetRecordButton() {
 }
 
 function finishMeasure() {
-  stopMeasure();
+  if (!measuring) return;      // 中止・終了済みのときは何もしない
+  stopGpsMeasure();
   resetRecordButton();
   if (!bestPos) {
     setStatus('位置を取得できませんでした。屋外でもう一度お試しください', 'danger');
@@ -798,6 +799,8 @@ function warnForce() {
 }
 
 function warnCancel() {
+  stopGpsMeasure();
+  resetRecordButton();
   document.getElementById('warnDialog').classList.remove('show');
   pendingPosition = null;
   setStatus('キャンセルしました', '');
@@ -841,6 +844,7 @@ function handlePhoto(input) {
 }
 
 function cancelRecord() {
+  stopGpsMeasure();
   pendingPosition = null;
   pendingPhotoBase64 = null;
   document.getElementById('commentDialog').classList.remove('show');
