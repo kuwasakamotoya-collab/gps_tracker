@@ -160,6 +160,16 @@
 
   .btn-price { grid-column: 1 / -1; background: var(--surface2); color: #fbbf24; border: 1px solid #fbbf24 !important; }
 
+  #movePanel {
+    display: none; position: fixed; left: 10px; right: 10px; bottom: 10px;
+    z-index: 1620; max-width: 700px; margin: 0 auto;
+    background: var(--surface); border: 2px solid #fbbf24; border-radius: 16px;
+    padding: 10px 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.6);
+  }
+  #movePanel.show { display: block; }
+  body.moving-ui { padding-bottom: 190px; }
+  body.guiding #movePanel { bottom: 150px; }
+
   .btn-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
   .btn-row button {
     padding: 13px 8px; border-radius: var(--radius); border: none;
@@ -430,6 +440,16 @@
   </div>
 </div>
 
+<!-- ピンの位置を直すパネル -->
+<div id="movePanel">
+  <div class="measure-title" id="moveTitle"></div>
+  <div class="measure-body" id="moveBody"></div>
+  <div class="measure-btns" style="grid-template-columns: 1fr 1fr;">
+    <button onclick="cancelMove()">元に戻す</button>
+    <button onclick="commitMove()" style="background:#fbbf24;color:#111;border-color:#fbbf24;">✓ ここで確定</button>
+  </div>
+</div>
+
 <!-- 距離・面積の計測パネル -->
 <div id="measurePanel">
   <div class="measure-title" id="measureTitle"></div>
@@ -536,6 +556,8 @@ const MEASURE_SECONDS = 20;   // 記録ボタンを押してから測定する�
 const ACC_LIMIT = 20;         // この値(m)より精度が悪い場合は警告を出す
 let watchId = null, measureTimer = null, measureLeft = 0;
 let bestPos = null, fixCount = 0, lastAcc = null, measuring = false;
+let fixes = [];
+const AVG_COUNT = 5;          // 測定中の、精度の良い上位◯回の位置を平均して記録する
 // 地図のピン（風船）のサイズ。標準(25x41)の半分
 const LEAFLET_IMG = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/';
 const smallIcon = L.icon({
@@ -607,6 +629,8 @@ const nowIcon = L.icon({
 let nowMarker = null, lastPopupClose = 0, locatingNow = false;
 
 function onMapClick(e) {
+  // ピンの位置を直している間は、タップした位置へピンを動かす
+  if (moveId !== null) { movePinTo(e.latlng); return; }
   // 距離・面積の計測中は、タップした位置を点として追加する
   if (measureMode) { measureTap(e.latlng); return; }
   // 吹き出しを閉じるためのタップ、測定中、取得中は何もしない
@@ -714,7 +738,7 @@ function startRecord() {
   }
   if (!navigator.geolocation) { setStatus('位置情報に対応していません', 'danger'); return; }
   measuring = true;
-  bestPos = null; fixCount = 0; lastAcc = null;
+  bestPos = null; fixCount = 0; lastAcc = null; fixes = [];
   measureLeft = MEASURE_SECONDS;
   const btn = document.getElementById('btnRecord');
   btn.classList.add('measuring');
@@ -732,6 +756,7 @@ function startRecord() {
 function onFix(pos) {
   fixCount++;
   lastAcc = pos.coords.accuracy;
+  fixes.push({ lat: pos.coords.latitude, lng: pos.coords.longitude, acc: pos.coords.accuracy });
   // 誤差が最も小さい値を残す（同じなら新しい方）
   if (!bestPos || pos.coords.accuracy <= bestPos.coords.accuracy) bestPos = pos;
   updateMeasureStatus();
@@ -779,8 +804,13 @@ function finishMeasure() {
     setStatus('位置を取得できませんでした。屋外でもう一度お試しください', 'danger');
     return;
   }
-  pendingPosition = bestPos;
-  const acc = Math.round(bestPos.coords.accuracy);
+  // 精度の良い上位の位置を、精度が良いほど重くして平均する（1回の外れ値に引きずられにくくする）
+  const avg = averageFixes();
+  pendingPosition = {
+    coords: { latitude: avg.lat, longitude: avg.lng, accuracy: avg.acc },
+    used: avg.used, total: fixes.length
+  };
+  const acc = Math.round(avg.acc);
   if (acc > ACC_LIMIT) {
     document.getElementById('warnText').textContent =
       `${MEASURE_SECONDS}秒間の最良値でも、精度は ±${acc}m でした（基準：±${ACC_LIMIT}m以内）。`;
@@ -791,11 +821,21 @@ function finishMeasure() {
   }
 }
 
+function averageFixes() {
+  const best = [...fixes].sort((a, b) => a.acc - b.acc).slice(0, AVG_COUNT);
+  let sw = 0, slat = 0, slng = 0;
+  best.forEach(f => {
+    const w = 1 / Math.pow(Math.max(f.acc, 1), 2);
+    sw += w; slat += f.lat * w; slng += f.lng * w;
+  });
+  return { lat: slat / sw, lng: slng / sw, acc: best[0].acc, used: best.length };
+}
+
 function openCommentDialog() {
   const acc = Math.round(pendingPosition.coords.accuracy);
   pendingPhotoBase64 = null;
   document.getElementById('accInfo').textContent =
-    `測定結果：精度 ±${acc}m（${MEASURE_SECONDS}秒間の最良値）`;
+    `測定結果：精度 ±${acc}m｜${MEASURE_SECONDS}秒間に${pendingPosition.total || 1}回測定し、精度の良い上位${pendingPosition.used || 1}回を平均しました`;
   document.getElementById('commentInput').value = '';
   document.getElementById('previewImg').className = '';
   document.getElementById('previewImg').src = '';
@@ -911,6 +951,7 @@ function renderAll(keepView) {
   }
   document.getElementById('countBadge').textContent = locations.length + '件';
   renderLog();
+  if (moveId !== null) rearmMove();
 }
 
 function renderLog() {
@@ -953,6 +994,101 @@ function closePhotoViewer() {
   document.getElementById('photoViewer').classList.remove('show');
 }
 
+/* ---------- ピンの位置を直す（ドラッグ、または地図をタップ） ---------- */
+let moveId = null, moveOrig = null, moveLast = null, moveMarker = null;
+const bigPinIcon = L.icon({
+  iconUrl: LEAFLET_IMG + 'marker-icon-2x.png',
+  shadowUrl: LEAFLET_IMG + 'marker-shadow.png',
+  iconSize: [25, 41], iconAnchor: [12, 41], popupAnchor: [1, -34],
+  shadowSize: [41, 41], shadowAnchor: [12, 41]
+});
+
+function armMovePin(marker) {
+  moveMarker = marker;
+  marker.setIcon(bigPinIcon);
+  marker.setZIndexOffset(1500);
+  if (moveLast) marker.setLatLng([moveLast.lat, moveLast.lng]);
+  if (marker.dragging) marker.dragging.enable();
+  marker.on('drag dragend', updateMovePanel);
+}
+
+function startMove(id) {
+  map.closePopup();
+  if (moveId !== null) cancelMove(true);
+  if (measureMode) stopMeasure();
+  const idx = locations.findIndex(l => l.id === id);
+  if (idx < 0) return;
+  const loc = locations[idx];
+  moveId = id;
+  moveOrig = { lat: loc.lat, lng: loc.lng };
+  moveLast = { lat: loc.lat, lng: loc.lng };
+  armMovePin(markers[idx]);
+  document.getElementById('movePanel').classList.add('show');
+  document.body.classList.add('moving-ui');
+  document.getElementById('moveTitle').textContent = `📍 #${idx + 1} の位置を直しています`;
+  map.setView([loc.lat, loc.lng], Math.max(map.getZoom(), 18));
+  updateMovePanel();
+  setStatus('📍 ピンをドラッグするか、地図をタップして、正しい位置へ動かしてください', 'warn');
+}
+
+function rearmMove() {
+  // 一覧の描き直しがあっても、直している最中のピンを引き続き動かせるようにする
+  const idx = locations.findIndex(l => l.id === moveId);
+  if (idx < 0) { endMove(); return; }
+  armMovePin(markers[idx]);
+}
+
+function movePinTo(latlng) {
+  if (!moveMarker) return;
+  moveMarker.setLatLng(latlng);
+  updateMovePanel();
+}
+
+function updateMovePanel() {
+  if (!moveMarker) return;
+  const ll = moveMarker.getLatLng();
+  moveLast = { lat: ll.lat, lng: ll.lng };
+  const d = haversine(moveOrig.lat, moveOrig.lng, ll.lat, ll.lng);
+  document.getElementById('moveBody').innerHTML =
+    'ピンをドラッグするか、正しい位置を地図でタップしてください。<br>'
+    + `動かした距離：<b>${fmtDist(d)}</b>（緯度 ${ll.lat.toFixed(5)}、経度 ${ll.lng.toFixed(5)}）`;
+}
+
+function endMove() {
+  if (moveMarker) {
+    moveMarker.off('drag dragend', updateMovePanel);
+    if (moveMarker.dragging) moveMarker.dragging.disable();
+  }
+  moveId = null; moveOrig = null; moveLast = null; moveMarker = null;
+  document.getElementById('movePanel').classList.remove('show');
+  document.body.classList.remove('moving-ui');
+}
+
+function cancelMove(silent) {
+  if (moveId === null) return;
+  endMove();
+  renderAll(true);            // ピンを元の位置・大きさに戻す
+  if (silent !== true) setStatus('位置の修正をやめました（元に戻しました）', '');
+}
+
+function commitMove() {
+  if (moveId === null) return;
+  const idx = locations.findIndex(l => l.id === moveId);
+  if (idx < 0) { endMove(); return; }
+  const d = haversine(moveOrig.lat, moveOrig.lng, moveLast.lat, moveLast.lng);
+  locations[idx].lat = moveLast.lat;
+  locations[idx].lng = moveLast.lng;
+  endMove();
+  saveData();
+  renderAll(true);
+  // 面積・コース・距離など、この点を使っている表示を更新する
+  resetDistance();
+  if (areaIds.length) updateArea();
+  if (courseIds.length) updateCourse();
+  markers[idx].openPopup();
+  setStatus(`📍 #${idx + 1} の位置を ${fmtDist(d)} 動かして、確定しました`, 'success');
+}
+
 /* ---------- 記録ピンの吹き出し ---------- */
 function popupHtml(loc) {
   const idx = locations.findIndex(l => l.id === loc.id);
@@ -966,6 +1102,7 @@ function popupHtml(loc) {
     + btn('#e879f9', '#111', 'pickDistance', distBtnLabel(loc.id))
     + btn('#38d9a9', '#111', 'pickArea', areaBtnLabel(loc.id))
     + btn('#a78bfa', '#111', 'pickCourse', courseBtnLabel(loc.id))
+    + btn('#fbbf24', '#111', 'startMove', '📍 位置を直す')
     + `</div>`;
 }
 
@@ -1315,6 +1452,7 @@ function setMeasureButtons() {
 }
 
 function startMeasure(mode) {
+  if (moveId !== null) cancelMove(true);
   if (measureMode === mode) { stopMeasure(); return; }   // 同じボタンをもう一度押すと終了
   wipeMeasure();
   map.closePopup();
