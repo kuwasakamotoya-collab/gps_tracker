@@ -610,6 +610,8 @@ function initMap() {
   });
   addFullscreenControl();
   L.control.layers(baseLayers, null, { position: 'topright', collapsed: true }).addTo(map);
+  addLocateControl();
+  setupLongPress();
   map.on('click', onMapClick);
   map.on('popupclose', () => { lastPopupClose = Date.now(); });
 }
@@ -629,6 +631,8 @@ const nowIcon = L.icon({
 let nowMarker = null, lastPopupClose = 0, locatingNow = false;
 
 function onMapClick(e) {
+  // 長押しのあとに続くタップは無視する
+  if (Date.now() - lastLongPress < 800) return;
   // ピンの位置を直している間は、タップした位置へピンを動かす
   if (moveId !== null) { movePinTo(e.latlng); return; }
   // 距離・面積の計測中は、タップした位置を点として追加する
@@ -636,10 +640,10 @@ function onMapClick(e) {
   // 吹き出しを閉じるためのタップ、測定中、取得中は何もしない
   if (Date.now() - lastPopupClose < 400) return;
   if (measuring || locatingNow) return;
-  showNowPin();
+  showNowPin(false);
 }
 
-function showNowPin() {
+function showNowPin(pan) {
   if (!navigator.geolocation) { setStatus('位置情報に対応していません', 'danger'); return; }
   locatingNow = true;
   setStatus('現在地を取得中...', 'loading');
@@ -652,8 +656,11 @@ function showNowPin() {
         .addTo(map)
         .bindPopup(`<b>📍 現在地</b><br>緯度: ${lat.toFixed(5)}<br>経度: ${lng.toFixed(5)}<br>精度: ±${Math.round(accuracy)}m<br>`
           + `<button class="popup-edit" onclick="clearNowPin()">ピンを消す</button>`);
-      if (!map.getBounds().contains([lat, lng])) map.panTo([lat, lng]);
-      setStatus(`📍 現在地を表示しました（精度 ±${Math.round(accuracy)}m）`, 'success');
+      if (pan) map.setView([lat, lng], Math.max(map.getZoom(), 16));
+      const offscreen = !map.getBounds().contains([lat, lng]);
+      setStatus(`📍 現在地を表示しました（精度 ±${Math.round(accuracy)}m）`
+        + (offscreen ? '｜今の画面の外です。右上の「◎ 現在地」で、現在地へ移動できます' : ''),
+        offscreen ? 'warn' : 'success');
     },
     (err) => {
       locatingNow = false;
@@ -667,6 +674,82 @@ function showNowPin() {
 function clearNowPin() {
   if (nowMarker) { map.removeLayer(nowMarker); nowMarker = null; }
   setStatus('現在地のピンを消しました', '');
+}
+
+/* ---------- 地図の長押し：その場所から、距離や面積を測る ---------- */
+const LP_MS = 600;          // 長押しと判断する時間（ミリ秒）
+const LP_MOVE_PX = 10;      // これ以上指が動いたら、長押しではない
+let lpTimer = null, lpStart = null, lastLongPress = 0, lpLatLng = null;
+
+function cancelLongPress() {
+  if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; }
+}
+
+function triggerLongPress(clientX, clientY) {
+  if (Date.now() - lastLongPress < 1200) return;       // 二重に動かさない
+  if (measureMode || moveId !== null || measuring) return;
+  const r = map.getContainer().getBoundingClientRect();
+  const ll = map.containerPointToLatLng([clientX - r.left, clientY - r.top]);
+  lastLongPress = Date.now();
+  lpLatLng = ll;
+  cancelLongPress();
+  try { if (navigator.vibrate) navigator.vibrate(30); } catch (e) {}
+  L.popup({ maxWidth: 300, minWidth: 220 })
+    .setLatLng(ll)
+    .setContent(`<b>📍 この場所</b><br>緯度: ${ll.lat.toFixed(5)}<br>経度: ${ll.lng.toFixed(5)}`
+      + `<div class="popup-btns">`
+      + `<button class="popup-edit" style="background:#e879f9;color:#111" onclick="measureFromLongPress('dist')">📏 ここから距離を測る</button>`
+      + `<button class="popup-edit" style="background:#38d9a9;color:#111" onclick="measureFromLongPress('area')">📐 ここから面積を測る</button>`
+      + `</div>`)
+    .openOn(map);
+}
+
+// 長押しした場所を1点目にして、距離・面積の計測を始める
+function measureFromLongPress(mode) {
+  const ll = lpLatLng;
+  map.closePopup();
+  if (!ll) return;
+  startMeasure(mode);
+  measurePts.push({ lat: ll.lat, lng: ll.lng });
+  drawMeasure();
+}
+
+function setupLongPress() {
+  const c = map.getContainer();
+  const skip = t => t.closest && t.closest('.leaflet-control, .leaflet-popup, .leaflet-marker-icon, .leaflet-tooltip');
+  c.addEventListener('pointerdown', (e) => {
+    if (!e.isPrimary) { cancelLongPress(); return; }          // 2本指（拡大・縮小）は対象外
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    if (skip(e.target)) return;
+    cancelLongPress();
+    lpStart = { x: e.clientX, y: e.clientY };
+    lpTimer = setTimeout(() => { lpTimer = null; triggerLongPress(lpStart.x, lpStart.y); }, LP_MS);
+  }, true);
+  c.addEventListener('pointermove', (e) => {
+    if (lpTimer && lpStart && Math.hypot(e.clientX - lpStart.x, e.clientY - lpStart.y) > LP_MOVE_PX) cancelLongPress();
+  }, true);
+  ['pointerup', 'pointercancel'].forEach(t => c.addEventListener(t, cancelLongPress, true));
+  map.on('zoomstart', cancelLongPress);
+  // 長押し・右クリックで出るブラウザのメニューを出さず、同じ動作にする
+  c.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    if (!skip(e.target)) triggerLongPress(e.clientX, e.clientY);
+  }, true);
+}
+
+function addLocateControl() {
+  const Ctl = L.Control.extend({
+    options: { position: 'topright' },
+    onAdd: function () {
+      const btn = L.DomUtil.create('button', 'map-full-btn');
+      btn.type = 'button';
+      btn.textContent = '◎ 現在地';
+      L.DomEvent.disableClickPropagation(btn);
+      L.DomEvent.on(btn, 'click', () => { if (!locatingNow && !measuring) showNowPin(true); });
+      return btn;
+    }
+  });
+  new Ctl().addTo(map);
 }
 
 /* ---------- 地図の拡大（全画面）・縮小 ---------- */
